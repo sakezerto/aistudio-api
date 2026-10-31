@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import secrets
 import time
 from contextlib import asynccontextmanager
@@ -186,12 +187,50 @@ async def lifespan(_app: FastAPI):
 
     tier_task = asyncio.create_task(_auto_refresh_tiers())
 
+    keepalive_task = None
+
+    async def _cookie_keepalive():
+        """空闲保活：定期让浏览器访问一次 AI Studio，滚动 __Secure-1PSIDTS。
+
+        完全没流量时浏览器不会碰 Google，1PSIDTS 就不再刷新；几个小时后第一个
+        请求带的还是旧时间戳，Google 直接 403 / 空响应，表现出来就是"隔一段时间
+        要重新导 cookie"。用 AISTUDIO_COOKIE_KEEPALIVE_SECONDS 调节，0=关闭。
+        """
+        raw = (os.getenv("AISTUDIO_COOKIE_KEEPALIVE_SECONDS") or "900").strip()
+        try:
+            interval = int(raw)
+        except ValueError:
+            logger.warning(
+                "AISTUDIO_COOKIE_KEEPALIVE_SECONDS=%r 非法，回退 900 秒", raw
+            )
+            interval = 900
+        if interval <= 0:
+            logger.info("Cookie 保活已关闭 (AISTUDIO_COOKIE_KEEPALIVE_SECONDS=%d)", interval)
+            return
+        logger.info("Cookie 保活已启用: 间隔=%d 秒", interval)
+        while True:
+            await asyncio.sleep(interval)
+            browser_session = getattr(client, "session", None)
+            if browser_session is None:
+                continue
+            try:
+                if await browser_session.keepalive_cookies():
+                    logger.debug("Cookie 保活完成: 已回写 auth.json")
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.debug("Cookie 保活异常: %s", e)
+
+    keepalive_task = asyncio.create_task(_cookie_keepalive())
+
     yield
     logger.info("服务正在关闭")
     if warmup_task and not warmup_task.done():
         warmup_task.cancel()
     if tier_task and not tier_task.done():
         tier_task.cancel()
+    if keepalive_task and not keepalive_task.done():
+        keepalive_task.cancel()
     if client:
         try:
             await client.close()

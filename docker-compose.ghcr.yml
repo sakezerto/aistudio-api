@@ -22,6 +22,8 @@ services:
       - AISTUDIO_ROTATOR_STATE_FILE=/app/data/rotator_state.json
       - AISTUDIO_CONFIG_FILE=/app/data/config.yaml
       - AISTUDIO_BROWSER_EXECUTABLE=/opt/cloakbrowser/chrome
+      # 空闲保活间隔（秒），0=关闭。防止闲置后 1PSIDTS 过期导致 403/空回。
+      - AISTUDIO_COOKIE_KEEPALIVE_SECONDS=900
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/v1beta/models"]
       interval: 30s

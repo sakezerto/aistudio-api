@@ -65,6 +65,18 @@ docker compose -f docker-compose.local.yml up -d --build
 - 重建后账号不丢的前提就是 `./data` 这个挂载，别再额外挂 `config.yaml`
 - Web 控制台：`http://localhost:8080`；需要密码就设置 `AISTUDIO_WEB_PASSWORD`
 
+## 会话保活（防止闲置后掉登录）
+
+服务每隔 `AISTUDIO_COOKIE_KEEPALIVE_SECONDS`（默认 900 秒，0=关闭）会通过浏览器
+同源 fetch 摸一次 AI Studio，让 Google 轮换 `__Secure-1PSIDTS` 并立刻回写
+`auth.json`。没有它的话，闲置几个小时后第一个请求带的是旧时间戳，会撞上
+403 或空响应，表现就是"隔一段时间要重新导一次 cookie"。
+
+```yaml
+environment:
+  - AISTUDIO_COOKIE_KEEPALIVE_SECONDS=900
+```
+
 ## 镜像：由本仓库 CI 构建（GHCR）
 
 `.github/workflows/build-personal-image.yml` 会在推送到 `master` / `local` 时，用本仓库的 `Dockerfile` 构建并推送：

@@ -499,6 +499,34 @@ class BrowserSession:
                     await target_page.collect_garbage()
                 gc.collect()
 
+    async def keepalive_cookies(self) -> bool:
+        """空闲保活：轻量访问 AI Studio，让 Google 轮换 __Secure-1PSIDTS 并回写磁盘。
+
+        完全没有流量时浏览器不会访问 Google，1PSIDTS 不会滚动；下一次请求就会
+        带着过期的时间戳撞上 403 / 空响应，看起来像"隔一段时间就得重新登录"。
+        这里用一次同源 fetch 换新的 Set-Cookie，然后立刻落盘。
+        """
+        page = self.page
+        if page is None or page.is_closed():
+            return False
+        if self._in_flight > 0:
+            # 有请求在跑，不抢页面
+            return False
+        try:
+            await page.evaluate(
+                """() => fetch('/app/prompts/new_chat', {credentials: 'include', cache: 'no-store'})
+                    .then((r) => r.status)
+                    .catch(() => -1)""",
+                timeout_s=12.0,
+            )
+        except Exception as e:
+            log.debug("Cookie 保活请求失败: %s", e)
+            return False
+        if self._auth_file:
+            with suppress(Exception):
+                await save_browser_cookies(page, self._auth_file)
+        return True
+
     async def import_cookies(
         self, cookie_string: str, auth_file: str | None = None
     ) -> int:
