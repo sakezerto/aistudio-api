@@ -1,0 +1,34 @@
+# 自用构建：不跟随上游镜像，始终从本仓库源码构建
+# 用法：docker compose -f docker-compose.local.yml up -d --build
+services:
+  aistudio-api:
+    build: .
+    image: aistudio-api-mine:latest
+    container_name: aistudio-api-mine
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+      # - "9222:9222"   # 调试浏览器时才开
+    volumes:
+      # 账号凭据、stats、rotator 状态、config.yaml 全在这里
+      - ./data:/app/data
+    env_file:
+      - .env
+    environment:
+      - AISTUDIO_PORT=8080
+      - AISTUDIO_BROWSER_PORT=9222
+      - AISTUDIO_BROWSER_HEADLESS=1
+      - AISTUDIO_DATA_DIR=/app/data
+      - AISTUDIO_ACCOUNTS_DIR=/app/data/accounts
+      - AISTUDIO_STATS_FILE=/app/data/stats.json
+      - AISTUDIO_ROTATOR_STATE_FILE=/app/data/rotator_state.json
+      # 注意：配置文件放在 data 里，不再挂载仓库内的 config.yaml，
+      # 这样改配置不会把工作区弄脏，rebase 上游时也不会冲突。
+      - AISTUDIO_CONFIG_FILE=/app/data/config.yaml
+      - AISTUDIO_BROWSER_EXECUTABLE=/opt/cloakbrowser/chrome
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1beta/models"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
