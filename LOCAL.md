@@ -80,10 +80,15 @@ docker compose -f docker-compose.local.yml up -d --build
 
 1. **当前激活账号**：在浏览器里发一次同源 fetch，让 Google 轮换 `__Secure-1PSIDTS`，
    然后立刻回写 `auth.json`（这条最可靠，能拿到真实 Set-Cookie）。
-2. **下一个账号**：按注册表顺序轮转，用 `curl_cffi` 走 Google 登录流做 HTTP 级刷新
-   （不开浏览器，代价很小），只更新 `auth.json` 里已有的条目。
+2. **下一个账号**：按注册表顺序轮转，用**该账号自己的 profile** 起一个短命浏览器
+   （同一个 CloakBrowser 二进制、同一个 profile 目录），打开 AI Studio、回写 cookie、
+   然后关掉。TLS 指纹、设备密钥、DBSC 绑定都和正常使用时一致，这是唯一能让
+   `__Secure-1PSIDTS` 真正滚动的方式。起不来或失败时才回退到 `curl_cffi` 的 HTTP 刷新。
 
 `AISTUDIO_COOKIE_KEEPALIVE_EXTRA`（默认 1）控制每轮额外带几个账号，0 = 只保活跃账号。
+`AISTUDIO_COOKIE_KEEPALIVE_BROWSER`（默认 1）控制非活跃账号是否走浏览器；设 0 则只用
+HTTP 刷新（省内存，但成功率低）。每轮额外账号会临时多起一个 Chromium（约 200-300MB、
+几秒），账号多的话把间隔调大一些。
 
 账号一切换（手动激活或自动轮转）就会立刻补一轮，不等定时器：新账号马上走浏览器级保活，
 下一个账号马上做 HTTP 刷新，然后回到原来的间隔节奏。
@@ -94,6 +99,7 @@ docker compose -f docker-compose.local.yml up -d --build
 environment:
   - AISTUDIO_COOKIE_KEEPALIVE_SECONDS=900
   - AISTUDIO_COOKIE_KEEPALIVE_EXTRA=1
+  - AISTUDIO_COOKIE_KEEPALIVE_BROWSER=1
 ```
 
 ## 镜像：由本仓库 CI 构建（GHCR）

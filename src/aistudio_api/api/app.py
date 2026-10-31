@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 
 from aistudio_api.application.api_service_gemini import classify_gemini_error_payload
 from aistudio_api.application.cookie_keepalive import (
+    keepalive_account_in_browser,
     pick_rotation_target,
     refresh_account_cookies_via_http,
     wait_for_next_round,
@@ -217,8 +218,13 @@ async def lifespan(_app: FastAPI):
             extra = max(0, int(extra_raw))
         except ValueError:
             extra = 1
+        flag = (os.getenv("AISTUDIO_COOKIE_KEEPALIVE_BROWSER") or "1").strip().lower()
+        use_browser_keepalive = flag not in {"0", "false", "no", "off"}
         logger.info(
-            "Cookie 保活已启用: 间隔=%d 秒, 每轮额外账号=%d", interval, extra
+            "Cookie 保活已启用: 间隔=%d 秒, 每轮额外账号=%d, 浏览器级=%s",
+            interval,
+            extra,
+            "开" if use_browser_keepalive else "关(纯 HTTP)",
         )
 
         cursor = 0
@@ -248,9 +254,16 @@ async def lifespan(_app: FastAPI):
                     target, cursor = pick_rotation_target(accounts, active_id, cursor)
                     if target is None:
                         break
-                    await refresh_account_cookies_via_http(
-                        service.get_account_auth_path(target.id)
-                    )
+                    auth_path = service.get_account_auth_path(target.id)
+                    refreshed = False
+                    if use_browser_keepalive:
+                        refreshed = await keepalive_account_in_browser(auth_path)
+                        if not refreshed:
+                            logger.warning(
+                                "账号 %s 浏览器级保活未成功，回退 HTTP 刷新", target.id
+                            )
+                    if not refreshed:
+                        await refresh_account_cookies_via_http(auth_path)
             except asyncio.CancelledError:
                 raise
             except Exception as e:

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import socket
 from collections.abc import Iterable, Sequence
 from contextlib import suppress
 from pathlib import Path
@@ -94,6 +95,102 @@ def _cookie_pairs(cookies: Iterable[dict[str, object]]) -> dict[str, str]:
         value = cookie.get("value")
         pairs[str(name)] = "" if value is None else str(value)
     return pairs
+
+
+def _pick_free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _load_auth_cookies(path: Path) -> list[dict[str, object]]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    cookies = data.get("cookies") or []
+    return [c for c in cookies if isinstance(c, dict) and c.get("name")]
+
+
+async def keepalive_account_in_browser(
+    auth_path: Path | str | None,
+    *,
+    headless: bool = True,
+) -> bool:
+    """用账号自己的 profile 起一个短命浏览器做保活（成功率最高的那条路）。
+
+    curl_cffi 走的是裸 HTTP，拿不到 DBSC 绑定的 ``__Secure-1PSIDTS``：Google 认出
+    不是原浏览器就拒绝滚动，甚至直接踢到登录页。这里换成同一个 CloakBrowser
+    二进制 + 该账号自己的 profile 目录——TLS 指纹、设备密钥、DBSC 绑定都和正常
+    使用时一致，Set-Cookie 才真的会被下发。
+
+    返回 True 表示：成功打开 AI Studio、没有被踢去登录页、并且已回写 auth.json。
+    """
+    path = Path(auth_path) if auth_path else None
+    if path is None or not path.is_file():
+        return False
+    cookies = _load_auth_cookies(path)
+    if not cookies:
+        return False
+
+    from aistudio_api.infrastructure.browser.browser_engine import (
+        launch_chromium_process,
+    )
+    from aistudio_api.infrastructure.browser.cdp_client import CDPClient
+    from aistudio_api.infrastructure.gateway.session_auth import save_browser_cookies
+
+    account = path.parent.name
+    port = _pick_free_port()
+    proc = None
+    client = None
+    page = None
+    try:
+        proc = await asyncio.to_thread(
+            launch_chromium_process, port, str(path.parent / "profile"), headless=headless
+        )
+        client = CDPClient(port)
+        await client.wait_until_ready(timeout_s=25.0)
+        page = await client.create_new_page(block_assets=True)
+        await page.set_cookies(cookies)
+        await page.goto(
+            "https://aistudio.google.com/app/prompts/new_chat", timeout_s=30.0
+        )
+        await page.wait_for_timeout(1200)
+
+        current_url = page.url or ""
+        if "accounts.google.com" in current_url or "ServiceLogin" in current_url:
+            log.warning("账号 %s 保活失败: 会话已被踢回登录页", account)
+            return False
+
+        # 再补一次同源请求，确保 Set-Cookie 落到 profile 里
+        with suppress(Exception):
+            await page.evaluate(
+                """() => fetch('/app/prompts/new_chat', {credentials: 'include', cache: 'no-store'})
+                    .then((r) => r.status)
+                    .catch(() => -1)""",
+                timeout_s=15.0,
+            )
+
+        fresh = await page.get_cookies()
+        if not fresh:
+            log.warning("账号 %s 保活失败: 浏览器没有返回任何 cookie", account)
+            return False
+        await save_browser_cookies(page, str(path), fresh)
+        log.info("账号 %s 浏览器级保活完成: cookie=%d 条", account, len(fresh))
+        return True
+    except Exception as e:
+        log.warning("账号 %s 浏览器级保活异常: %s", account, e)
+        return False
+    finally:
+        with suppress(Exception):
+            if page is not None and not page.is_closed():
+                await page.close()
+        with suppress(Exception):
+            if client is not None:
+                await client.close()
+        with suppress(Exception):
+            if proc is not None:
+                await asyncio.to_thread(proc.terminate, 3.0)
 
 
 async def refresh_account_cookies_via_http(auth_path: Path | str | None) -> int:

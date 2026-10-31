@@ -30,6 +30,8 @@ services:
       - AISTUDIO_COOKIE_KEEPALIVE_SECONDS=900
       # 每轮额外保活的账号数（活跃账号之外，按顺序轮转），0=只保活跃
       - AISTUDIO_COOKIE_KEEPALIVE_EXTRA=1
+      # 非活跃账号也走浏览器（自己的 profile）保活，1=开，0=只用 HTTP 兜底
+      - AISTUDIO_COOKIE_KEEPALIVE_BROWSER=1
     # 容器自带 HEALTHCHECK 每 30 秒 probe 一次，日志里会留下一条鉴权/401 噪声。
     # 这份部署默认关掉；要用健康检查就删掉 disable，用下面的 test（/health 免鉴权）。
     healthcheck:
