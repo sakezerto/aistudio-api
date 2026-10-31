@@ -65,6 +65,15 @@ docker compose -f docker-compose.local.yml up -d --build
 - 重建后账号不丢的前提就是 `./data` 这个挂载，别再额外挂 `config.yaml`
 - Web 控制台：`http://localhost:8080`；需要密码就设置 `AISTUDIO_WEB_PASSWORD`
 
+## 端口与健康检查
+
+- 容器内固定监听 `8080`；`docker-compose` 里映射成 `8888:8080`（bridge 网络），
+  外部访问用 `http://<宿主IP>:8888`。宿主侧端口不影响容器内的探活。
+- 镜像自带 `HEALTHCHECK`，现在指向免鉴权的 `/health`（以前指向 `/v1beta/models`，
+  配了 `api_keys` 后必然 401，会把容器标成 unhealthy 并刷日志）。
+- 这份 compose 默认 `healthcheck.disable: true`，不想要这个信号就保持关闭；
+  需要时删掉 `disable` 并启用下面的 `test`。
+
 ## 会话保活（防止闲置后掉登录）
 
 服务每隔 `AISTUDIO_COOKIE_KEEPALIVE_SECONDS`（默认 900 秒，0=关闭）会通过浏览器

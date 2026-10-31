@@ -7,7 +7,7 @@ services:
     container_name: aistudio-api-mine
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "8888:8080"   # 宿主 8888 -> 容器 8080（bridge）
     volumes:
       - ./data:/app/data
     env_file:
@@ -24,10 +24,12 @@ services:
       - AISTUDIO_BROWSER_EXECUTABLE=/opt/cloakbrowser/chrome
       # 空闲保活间隔（秒），0=关闭。防止闲置后 1PSIDTS 过期导致 403/空回。
       - AISTUDIO_COOKIE_KEEPALIVE_SECONDS=900
+    # 容器自带 HEALTHCHECK 每 30 秒 probe 一次，日志里会留下一条鉴权/401 噪声。
+    # 这份部署默认关掉；要用健康检查就删掉 disable，用下面的 test（/health 免鉴权）。
     healthcheck:
-      # /v1beta/models 在配置了 api_keys 时必然 401，别拿它做探活
-      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 10s
-      start_period: 10s
-      retries: 3
+      disable: true
+      # test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      # interval: 30s
+      # timeout: 10s
+      # retries: 3
+      # start_period: 20s
