@@ -65,6 +65,27 @@ docker compose -f docker-compose.local.yml up -d --build
 - 重建后账号不丢的前提就是 `./data` 这个挂载，别再额外挂 `config.yaml`
 - Web 控制台：`http://localhost:8080`；需要密码就设置 `AISTUDIO_WEB_PASSWORD`
 
+## 镜像：由本仓库 CI 构建（GHCR）
+
+`.github/workflows/build-personal-image.yml` 会在推送到 `master` / `local` 时，用本仓库的 `Dockerfile` 构建并推送：
+
+```
+ghcr.io/sakezerto/aistudio-api:latest
+ghcr.io/sakezerto/aistudio-api:<commit-sha>
+```
+
+拉取并运行：
+
+```bash
+docker pull ghcr.io/sakezerto/aistudio-api:latest
+docker compose -f docker-compose.ghcr.yml up -d
+```
+
+- 只改文档/compose/`local/**` 不会触发重建（workflow 里有 `paths-ignore`）
+- 想手动重建：Actions 页面点 "Run workflow"，或 `gh workflow run build-personal-image.yml -R sakezerto/aistudio-api`
+- 镜像只有 `linux/amd64`（CloakBrowser 的 arm64 包也能装，但没在 CI 里构建）
+- 包默认跟随仓库可见性，匿名 `docker pull` 已验证可用
+
 ## 备注
 
 - `data/`、`.env`、`.venv/` 都在 `.gitignore` 里，不会被提交

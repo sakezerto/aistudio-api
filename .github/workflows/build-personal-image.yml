@@ -6,6 +6,10 @@ on:
     branches:
       - master
       - local
+    paths-ignore:
+      - '**.md'
+      - 'local/**'
+      - 'docker-compose*.yml'
   workflow_dispatch:
 
 permissions:

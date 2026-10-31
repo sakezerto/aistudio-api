@@ -1,0 +1,30 @@
+# 直接用 GitHub Actions 从本仓库构建、推到 GHCR 的镜像（不本地 build）
+# 用法：docker compose -f docker-compose.ghcr.yml up -d
+services:
+  aistudio-api:
+    image: ghcr.io/sakezerto/aistudio-api:latest
+    pull_policy: always
+    container_name: aistudio-api-mine
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data
+    env_file:
+      - .env
+    environment:
+      - AISTUDIO_PORT=8080
+      - AISTUDIO_BROWSER_PORT=9222
+      - AISTUDIO_BROWSER_HEADLESS=1
+      - AISTUDIO_DATA_DIR=/app/data
+      - AISTUDIO_ACCOUNTS_DIR=/app/data/accounts
+      - AISTUDIO_STATS_FILE=/app/data/stats.json
+      - AISTUDIO_ROTATOR_STATE_FILE=/app/data/rotator_state.json
+      - AISTUDIO_CONFIG_FILE=/app/data/config.yaml
+      - AISTUDIO_BROWSER_EXECUTABLE=/opt/cloakbrowser/chrome
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1beta/models"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
