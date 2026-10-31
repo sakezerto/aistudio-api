@@ -1,0 +1,2 @@
+# Shell 脚本必须 LF，否则 Windows 上 bash 会报 $'\r': command not found
+*.sh text eol=lf
