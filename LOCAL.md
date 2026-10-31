@@ -84,6 +84,9 @@ docker compose -f docker-compose.local.yml up -d --build
    （不开浏览器，代价很小），只更新 `auth.json` 里已有的条目。
 
 `AISTUDIO_COOKIE_KEEPALIVE_EXTRA`（默认 1）控制每轮额外带几个账号，0 = 只保活跃账号。
+
+账号一切换（手动激活或自动轮转）就会立刻补一轮，不等定时器：新账号马上走浏览器级保活，
+下一个账号马上做 HTTP 刷新，然后回到原来的间隔节奏。
 没有保活的话，闲置几个小时后第一个请求带的是旧时间戳，会撞上 403 或空响应，
 表现就是"隔一段时间要重新导一次 cookie"。
 

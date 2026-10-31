@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Iterable, Sequence
+from contextlib import suppress
 from pathlib import Path
 from typing import Protocol
 
@@ -25,6 +26,47 @@ log = get_logger("keepalive")
 class _HasAccountFields(Protocol):
     id: str
     enabled: bool
+
+
+_switch_state: dict[str, object] = {"loop": None, "event": None, "pending": False}
+
+
+def _signal() -> asyncio.Event:
+    """取当前事件循环上的唤醒事件；跨循环（及测试）时重建，pending 会带过去。"""
+    loop = asyncio.get_running_loop()
+    if _switch_state["loop"] is not loop or _switch_state["event"] is None:
+        event = asyncio.Event()
+        if _switch_state["pending"]:
+            event.set()
+        _switch_state["loop"] = loop
+        _switch_state["event"] = event
+    return _switch_state["event"]  # type: ignore[return-value]
+
+
+def notify_account_switched(auth_file: str | None = None) -> None:
+    """账号切换后唤醒保活循环：不用等满一个间隔就补一轮。"""
+    _switch_state["pending"] = True
+    # 没有运行中的事件循环时（极少见）只留 pending 标记，下一轮照样生效
+    with suppress(RuntimeError):
+        _signal().set()
+    log.debug("保活收到账号切换信号: %s", auth_file)
+
+
+async def wait_for_next_round(interval: float) -> bool:
+    """等下一轮；返回 True 表示被"账号切换"提前唤醒。"""
+    event = _signal()
+    if _switch_state["pending"]:
+        _switch_state["pending"] = False
+        event.clear()
+        return True
+    try:
+        await asyncio.wait_for(event.wait(), timeout=interval)
+    except TimeoutError:
+        return False
+    finally:
+        _switch_state["pending"] = False
+        event.clear()
+    return True
 
 
 def pick_rotation_target(

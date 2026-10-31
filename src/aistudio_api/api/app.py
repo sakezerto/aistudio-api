@@ -19,6 +19,7 @@ from aistudio_api.application.api_service_gemini import classify_gemini_error_pa
 from aistudio_api.application.cookie_keepalive import (
     pick_rotation_target,
     refresh_account_cookies_via_http,
+    wait_for_next_round,
 )
 from aistudio_api.infrastructure.gateway.client import AIStudioClient
 from aistudio_api.infrastructure.gateway.model_defaults import (
@@ -222,7 +223,8 @@ async def lifespan(_app: FastAPI):
 
         cursor = 0
         while True:
-            await asyncio.sleep(interval)
+            if await wait_for_next_round(interval):
+                logger.info("检测到账号切换，立即执行一轮保活")
             browser_session = getattr(client, "session", None)
             if browser_session is not None:
                 try:

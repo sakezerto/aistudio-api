@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager, suppress
 from hashlib import sha256
 from pathlib import Path
 
+from aistudio_api.application.cookie_keepalive import notify_account_switched
 from aistudio_api.config import settings
 from aistudio_api.infrastructure.browser.browser_engine import (
     ChromiumProcess,
@@ -175,6 +176,9 @@ class BrowserSession:
     async def switch_auth(self, auth_file: str | None) -> None:
         """Switch auth using blue-green transition without killing in-flight streams."""
         await self.transition_to_account(auth_file, force_refresh=True)
+        # 切换完立刻让保活补一轮：新账号马上走浏览器级保活，
+        # 下一个账号也立刻刷新，不用等下一个间隔。
+        notify_account_switched(auth_file)
 
     async def transition_to_account(
         self, auth_file: str | None, force_refresh: bool = False
