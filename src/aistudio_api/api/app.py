@@ -420,6 +420,11 @@ async def spa_navigation_middleware(request: Request, call_next):
 
     response = await call_next(request)
 
+    if request.url.path.startswith(("/assets/", "/static/")):
+        # 前端资源文件名不带 content hash，镜像更新后浏览器可能继续使用旧 bundle，
+        # 表现为某个 SPA 视图空白（如账号管理）。强制每次用 ETag 重新校验。
+        response.headers["Cache-Control"] = "no-cache"
+
     if request.url.path.startswith(("/accounts", "/api/accounts")) or is_html_nav:
         existing_vary = response.headers.get("Vary")
         if existing_vary:
