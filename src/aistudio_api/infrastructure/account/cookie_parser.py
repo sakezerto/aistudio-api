@@ -418,11 +418,15 @@ async def probe_account_email(
     return None
 
 
-async def probe_account_benefit_tier(
+async def probe_account_benefit_tier_strict(
     raw_or_dict: object,
     auth_user: str = "0",
-) -> str:
-    """通过 GetAiStudioBenefitTier RPC 探测指定子账号的订阅权益等级。"""
+) -> str | None:
+    """探测指定子账号的订阅权益等级；无法判定时返回 None 而不是 Free。
+
+    探测失败（超时、非 200、空响应、异常）与"账号确实是 Free"必须区分开，
+    否则调用方会把一次网络抖动写进 registry，把付费账号永久降级。
+    """
     cookie_dict = (
         raw_or_dict
         if isinstance(raw_or_dict, dict)
@@ -430,7 +434,7 @@ async def probe_account_benefit_tier(
         else parse_raw_cookies(raw_or_dict)
     )
     if not cookie_dict:
-        return "Free"
+        return None
 
     import httpx
 
@@ -457,11 +461,20 @@ async def probe_account_benefit_tier(
     try:
         async with httpx.AsyncClient(timeout=8.0, proxy=settings.proxy_url) as client:
             resp = await client.post(tier_url, headers=headers, content="[]")
-            if resp.status_code == 200:
+            if resp.status_code == 200 and resp.text.strip():
                 return parse_benefit_tier_response(resp.text)
     except Exception as e:
         logger.debug("探测子账号 u/%s 权益等级失败: %s", u_index, e)
-    return "Free"
+    return None
+
+
+async def probe_account_benefit_tier(
+    raw_or_dict: object,
+    auth_user: str = "0",
+) -> str:
+    """探测订阅权益等级，无法判定时退回 Free（保留旧语义，按需使用）。"""
+    tier = await probe_account_benefit_tier_strict(raw_or_dict, auth_user=auth_user)
+    return tier or "Free"
 
 
 async def probe_google_accounts_infinite(

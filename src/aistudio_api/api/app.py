@@ -110,7 +110,7 @@ async def lifespan(_app: FastAPI):
         import json
 
         from aistudio_api.infrastructure.account.cookie_parser import (
-            probe_account_benefit_tier,
+            probe_account_benefit_tier_strict,
             probe_account_email,
         )
 
@@ -152,20 +152,28 @@ async def lifespan(_app: FastAPI):
                             )
                             if em:
                                 account_store.update_account_email(a.id, em)
-                        t = await probe_account_benefit_tier(
+                        probed_tier = await probe_account_benefit_tier_strict(
                             cdict, auth_user=a.auth_user or "0"
                         )
-                        resolved_tier = t or "Free"
+                        if probed_tier is None:
+                            # 探测没拿到结论（超时/非 200/空响应）时保持原等级，
+                            # 也不要打 tier_checked_at，否则会被锁住 3 天不再重试。
+                            logger.info(
+                                "账号 %s 权益探测无结论，保留原等级 %s，下次启动重试",
+                                a.id,
+                                a.tier,
+                            )
+                            continue
                         account_store.update_account_tier(
-                            a.id, resolved_tier, checked_at=now_ts
+                            a.id, probed_tier, checked_at=now_ts
                         )
-                        if resolved_tier != "Free" and a.tier == "Free":
+                        if probed_tier != "Free" and a.tier == "Free":
                             upgraded_count += 1
                             logger.info(
                                 "账号订阅等级自动升级: id=%s (u/%s) -> %s",
                                 a.id,
                                 a.auth_user,
-                                resolved_tier,
+                                probed_tier,
                             )
                 except Exception as e:
                     logger.debug("账号 %s 订阅检测异常: %s", a.id, e)

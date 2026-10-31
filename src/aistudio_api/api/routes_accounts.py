@@ -16,6 +16,7 @@ from aistudio_api.infrastructure.account.account_store import AccountMeta
 from aistudio_api.infrastructure.account.cookie_parser import (
     parse_cookie_string,
     probe_account_benefit_tier,
+    probe_account_benefit_tier_strict,
     probe_account_email,
 )
 from aistudio_api.infrastructure.utils.common import mask_email
@@ -264,10 +265,10 @@ async def detect_account_email(
                         cookie_dict, auth_user=acc.auth_user or "0"
                     )
                 if not detected_tier or detected_tier == "Free":
-                    http_tier = await probe_account_benefit_tier(
+                    http_tier = await probe_account_benefit_tier_strict(
                         cookie_dict, auth_user=acc.auth_user or "0"
                     )
-                    if (http_tier and http_tier != "Free") or not detected_tier:
+                    if http_tier and (http_tier != "Free" or not detected_tier):
                         detected_tier = http_tier
         except Exception as e:
             log.debug("通过 HTTP 探测账号 %s 邮箱/等级失败: %s", account_id, e)
@@ -332,7 +333,8 @@ async def detect_account_tier(
                 if isinstance(c, dict) and c.get("name")
             }
             if cookie_dict:
-                detected_tier = await probe_account_benefit_tier(
+                # 探测失败时保持原等级，不把一次抖动写成 Free
+                detected_tier = await probe_account_benefit_tier_strict(
                     cookie_dict, auth_user=acc.auth_user or "0"
                 )
         except Exception as e:
