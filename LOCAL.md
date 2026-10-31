@@ -76,14 +76,21 @@ docker compose -f docker-compose.local.yml up -d --build
 
 ## 会话保活（防止闲置后掉登录）
 
-服务每隔 `AISTUDIO_COOKIE_KEEPALIVE_SECONDS`（默认 900 秒，0=关闭）会通过浏览器
-同源 fetch 摸一次 AI Studio，让 Google 轮换 `__Secure-1PSIDTS` 并立刻回写
-`auth.json`。没有它的话，闲置几个小时后第一个请求带的是旧时间戳，会撞上
-403 或空响应，表现就是"隔一段时间要重新导一次 cookie"。
+每隔 `AISTUDIO_COOKIE_KEEPALIVE_SECONDS`（默认 900 秒，0=关闭）跑一轮，每轮保两个账号：
+
+1. **当前激活账号**：在浏览器里发一次同源 fetch，让 Google 轮换 `__Secure-1PSIDTS`，
+   然后立刻回写 `auth.json`（这条最可靠，能拿到真实 Set-Cookie）。
+2. **下一个账号**：按注册表顺序轮转，用 `curl_cffi` 走 Google 登录流做 HTTP 级刷新
+   （不开浏览器，代价很小），只更新 `auth.json` 里已有的条目。
+
+`AISTUDIO_COOKIE_KEEPALIVE_EXTRA`（默认 1）控制每轮额外带几个账号，0 = 只保活跃账号。
+没有保活的话，闲置几个小时后第一个请求带的是旧时间戳，会撞上 403 或空响应，
+表现就是"隔一段时间要重新导一次 cookie"。
 
 ```yaml
 environment:
   - AISTUDIO_COOKIE_KEEPALIVE_SECONDS=900
+  - AISTUDIO_COOKIE_KEEPALIVE_EXTRA=1
 ```
 
 ## 镜像：由本仓库 CI 构建（GHCR）

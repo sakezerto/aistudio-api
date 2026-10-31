@@ -16,6 +16,10 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from aistudio_api.application.api_service_gemini import classify_gemini_error_payload
+from aistudio_api.application.cookie_keepalive import (
+    pick_rotation_target,
+    refresh_account_cookies_via_http,
+)
 from aistudio_api.infrastructure.gateway.client import AIStudioClient
 from aistudio_api.infrastructure.gateway.model_defaults import (
     get_configured_logging_settings,
@@ -207,19 +211,48 @@ async def lifespan(_app: FastAPI):
         if interval <= 0:
             logger.info("Cookie 保活已关闭 (AISTUDIO_COOKIE_KEEPALIVE_SECONDS=%d)", interval)
             return
-        logger.info("Cookie 保活已启用: 间隔=%d 秒", interval)
+        extra_raw = (os.getenv("AISTUDIO_COOKIE_KEEPALIVE_EXTRA") or "1").strip()
+        try:
+            extra = max(0, int(extra_raw))
+        except ValueError:
+            extra = 1
+        logger.info(
+            "Cookie 保活已启用: 间隔=%d 秒, 每轮额外账号=%d", interval, extra
+        )
+
+        cursor = 0
         while True:
             await asyncio.sleep(interval)
             browser_session = getattr(client, "session", None)
-            if browser_session is None:
+            if browser_session is not None:
+                try:
+                    if await browser_session.keepalive_cookies():
+                        logger.debug("活跃账号保活完成: 已回写 auth.json")
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.debug("活跃账号保活异常: %s", e)
+
+            if extra <= 0:
+                continue
+            service = runtime_state.account_service
+            if service is None:
                 continue
             try:
-                if await browser_session.keepalive_cookies():
-                    logger.debug("Cookie 保活完成: 已回写 auth.json")
+                accounts = service.list_accounts()
+                active = service.get_active_account()
+                active_id = active.id if active else None
+                for _ in range(extra):
+                    target, cursor = pick_rotation_target(accounts, active_id, cursor)
+                    if target is None:
+                        break
+                    await refresh_account_cookies_via_http(
+                        service.get_account_auth_path(target.id)
+                    )
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                logger.debug("Cookie 保活异常: %s", e)
+                logger.debug("非活跃账号保活异常: %s", e)
 
     keepalive_task = asyncio.create_task(_cookie_keepalive())
 
