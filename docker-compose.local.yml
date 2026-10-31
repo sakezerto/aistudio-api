@@ -29,7 +29,8 @@ services:
       # 空闲保活间隔（秒），0=关闭。防止闲置后 1PSIDTS 过期导致 403/空回。
       - AISTUDIO_COOKIE_KEEPALIVE_SECONDS=900
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/v1beta/models"]
+      # /v1beta/models 在配置了 api_keys 时必然 401，别拿它做探活
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
       interval: 30s
       timeout: 10s
       start_period: 10s

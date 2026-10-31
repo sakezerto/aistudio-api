@@ -106,7 +106,8 @@ EXPOSE 8080 9222
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8080/v1beta/models || exit 1
+    # /v1beta/models 需要 api_keys 里的 key，curl 不带必然 401；用免鉴权的 /health
+    CMD curl -fsS http://localhost:8080/health || exit 1
 
 # Container entrypoint and default command
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
