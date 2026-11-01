@@ -8,6 +8,7 @@ import re
 import time
 import uuid
 from collections.abc import Iterable
+from contextlib import suppress
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -125,6 +126,54 @@ DISCARDABLE_IMPORT_COOKIE_NAMES: frozenset[str] = frozenset(
         "__Secure-OSID",
     }
 )
+
+
+COOKIE_EDITOR_SAME_SITE = {
+    "none": "no_restriction",
+    "no_restriction": "no_restriction",
+    "lax": "lax",
+    "strict": "strict",
+    "unspecified": "unspecified",
+    "": "unspecified",
+}
+
+
+def to_cookie_editor_json(cookies: list[dict[str, object]]) -> list[dict[str, object]]:
+    """把浏览器 cookie jar（CDP ``Network.getCookies``）转成 Cookie-Editor 导出格式。
+
+    字段与 Cookie-Editor 的 "Export → JSON" 完全对齐：domain / expirationDate /
+    hostOnly / httpOnly / name / path / sameSite / secure / session / storeId / value。
+    这样一份导出既能给人眼看，也能原样粘回面板的导入框。
+    """
+    exported: list[dict[str, object]] = []
+    for c in cookies:
+        if not isinstance(c, dict):
+            continue
+        name = str(c.get("name") or "").strip()
+        value = c.get("value")
+        if not name or value is None:
+            continue
+        domain = str(c.get("domain") or "")
+        expires = c.get("expires")
+        session = bool(c.get("session")) or expires in (None, -1, 0)
+        same_site = COOKIE_EDITOR_SAME_SITE.get(str(c.get("sameSite") or "").lower(), "unspecified")
+        item: dict[str, object] = {
+            "domain": domain,
+            "hostOnly": not domain.startswith("."),
+            "httpOnly": bool(c.get("httpOnly")),
+            "name": name,
+            "path": str(c.get("path") or "/"),
+            "sameSite": same_site,
+            "secure": bool(c.get("secure")),
+            "session": session,
+            "storeId": "0",
+            "value": str(value),
+        }
+        if not session:
+            with suppress(Exception):
+                item["expirationDate"] = float(expires)  # type: ignore[arg-type]
+        exported.append(item)
+    return exported
 
 
 def parse_raw_cookies(raw: object) -> dict[str, str]:

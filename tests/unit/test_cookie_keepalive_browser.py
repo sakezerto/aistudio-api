@@ -23,6 +23,7 @@ class _Page:
         self.closed = False
         self.cookies = cookies if cookies is not None else [{"name": "SID", "value": "x"}]
         self.injected: list[dict[str, object]] | None = None
+        self.injects: list[list[dict[str, object]]] = []
         self.visited: list[str] = []
         self.fetched = False
         self.cleared = False
@@ -33,6 +34,7 @@ class _Page:
     async def set_cookies(self, cookies):
         # 模拟浏览器 cookie jar：注入即覆盖整份 jar
         self.injected = list(cookies)
+        self.injects.append(list(cookies))
         if self.keep_jar:
             self.cookies = list(cookies)
 
@@ -108,17 +110,37 @@ async def test_browser_keepalive_success(tmp_path, monkeypatch):
     auth = _make_account(tmp_path)
     page = _Page("https://aistudio.google.com/app/prompts/new_chat")
     proc = _Proc()
-    client, saved = _patch_browser(monkeypatch, page, proc)
+    client, _saved = _patch_browser(monkeypatch, page, proc)
 
     assert await kp.keepalive_account_in_browser(auth) is True
 
-    assert page.injected == [{"name": "SID", "value": "seed"}]
+    # 第一次注入是从 auth.json 读的种子 cookie
+    assert page.injects[0] == [{"name": "SID", "value": "seed"}]
+    # 第二次注入必须是"导入结果"，也就是 parse_cookie_string 处理过的结构
+    assert any(c.get("name") == "SID" for c in page.injects[-1])
     assert page.cleared is True, "没有做回灌自检（清空后只用导出的 cookie 重登）"
     google_hits = [u for u in page.visited if "accounts.google.com" in u]
     assert len(google_hits) >= 2, "自检那一轮没有重新走登录引导"
     assert any("aistudio.google.com" in u for u in page.visited), "没有打开 AI Studio"
-    assert len(saved) == 1  # 已回写 auth.json
-    assert saved[0][3] is True, "保活必须全量覆盖，而不是增量合并"
+    data = json.loads(auth.read_text(encoding="utf-8"))
+    assert {"SID"} <= {c["name"] for c in data["cookies"]}
+
+    export_file = auth.parent / "cookie-editor-export.json"
+    assert export_file.is_file(), "没有留下 Cookie-Editor 格式的导出文件"
+    exported = json.loads(export_file.read_text(encoding="utf-8"))
+    assert exported, "导出文件为空"
+    assert set(exported[0]) >= {
+        "domain",
+        "hostOnly",
+        "httpOnly",
+        "name",
+        "path",
+        "sameSite",
+        "secure",
+        "session",
+        "storeId",
+        "value",
+    }
     assert client.closed is True
     assert proc.terminated is True
 

@@ -14,6 +14,10 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Protocol
 
+from aistudio_api.infrastructure.account.cookie_parser import (
+    parse_cookie_string,
+    to_cookie_editor_json,
+)
 from aistudio_api.infrastructure.account.cookie_refresher import (
     _refresh_session_cookies,
 )
@@ -102,6 +106,20 @@ def _pick_free_port() -> int:
         return int(sock.getsockname()[1])
 
 
+def _write_storage_state(path: Path, storage_state: dict[str, object]) -> int:
+    """整份写入 cookie，保留 auth.json 里的其它元数据，返回写入条数。"""
+    data: dict[str, object] = {}
+    with suppress(OSError, ValueError):
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(loaded, dict):
+            data = loaded
+    cookies = [c for c in (storage_state.get("cookies") or []) if isinstance(c, dict)]
+    data["cookies"] = cookies
+    data["origins"] = storage_state.get("origins") or []
+    atomic_write_json(path, data)
+    return len(cookies)
+
+
 def _load_auth_cookies(path: Path) -> list[dict[str, object]]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -140,7 +158,6 @@ async def keepalive_account_in_browser(
     from aistudio_api.infrastructure.browser.cdp_client import CDPClient
     from aistudio_api.infrastructure.gateway.session_auth import (
         bootstrap_google_session,
-        save_browser_cookies,
     )
 
     account = path.parent.name
@@ -169,29 +186,48 @@ async def keepalive_account_in_browser(
             log.warning("账号 %s 保活失败: 登录流程仍停在 Google 登录页", account)
             return False
 
-        exported = await page.get_cookies()
-        if not exported:
+        jar = await page.get_cookies()
+        if not jar:
             log.warning("账号 %s 保活失败: 浏览器没有返回任何 cookie", account)
             return False
 
-        # 回灌自检：清空浏览器，只用刚导出的这一份重新登录一次。
-        # 这一步等价于「手动导出 → 导入 → 刷新页面」，能过才说明导出的 cookie 自足，
-        # 否则写回去也只是一份登不上去的快照。
+        # ① 按 Cookie-Editor 的 JSON 格式导出（domain/expirationDate/hostOnly/... 一个不少）
+        export = to_cookie_editor_json(jar)
+        if not export:
+            log.warning("账号 %s 保活失败: 导出的 cookie 列表为空", account)
+            return False
+        export_path = path.parent / "cookie-editor-export.json"
+        with suppress(OSError):
+            export_path.write_text(
+                json.dumps(export, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+
+        # ② 走面板导入框同一条解析链：和粘贴一份 Cookie-Editor 导出完全等价
+        storage_state = parse_cookie_string(json.dumps(export, ensure_ascii=False))
+        imported = [c for c in (storage_state.get("cookies") or []) if isinstance(c, dict)]
+        if not imported:
+            log.warning("账号 %s 保活失败: 导入后没有可用 cookie", account)
+            return False
+
+        # ③ 回灌自检：清空浏览器，只灌"导入结果"重新登录一遍；过不了就不写盘
         await page.clear_cookies()
-        await page.set_cookies(exported)
+        await page.set_cookies(imported)
         await bootstrap_google_session(page)
         verify_url = page.url or ""
         if "accounts.google.com" in verify_url or "ServiceLogin" in verify_url:
             log.warning(
-                "账号 %s 保活失败: 导出的 cookie 无法独立登录，需要重新导出", account
+                "账号 %s 保活失败: Cookie-Editor 导出再导入后仍无法登录，需要重新导出",
+                account,
             )
             return False
 
-        verified = await page.get_cookies()
-        final = verified or exported
-        await save_browser_cookies(page, str(path), final, replace=True)
+        written = _write_storage_state(path, storage_state)
         log.info(
-            "账号 %s 保活完成: 回灌自检通过，已全量覆盖 %d 条 cookie", account, len(final)
+            "账号 %s 保活完成: Cookie-Editor 导出 %d 条 → 导入 %d 条，回灌自检通过（%s）",
+            account,
+            len(export),
+            written,
+            export_path,
         )
         return True
     except Exception as e:

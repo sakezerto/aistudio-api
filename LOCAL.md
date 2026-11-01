@@ -86,9 +86,12 @@ docker compose -f docker-compose.local.yml up -d --build
    cookie 整份覆盖**回 `auth.json`（`replace=True`，旧快照直接丢弃，不再增量合并），
    最后关掉浏览器。TLS 指纹、设备密钥、DBSC 绑定都和正常使用时一致，这是唯一能让
    `__Secure-1PSIDTS` 真正滚动的方式。
-   写盘前还会做一次**回灌自检**：清空浏览器 cookie，只用刚导出的这一份重新登录一遍
-   （等价于“手动导出 → 导入 → 刷新”）；过不了说明这份 cookie 已不足以登录，直接判失败、
-   **绝不写盘**，免得把一份登不上去的快照当成有效凭据。
+   抓到的 jar 会先转成 **Cookie-Editor 的 JSON 导出格式**（`domain` / `expirationDate` /
+   `hostOnly` / `httpOnly` / `name` / `path` / `sameSite` / `secure` / `session` /
+   `storeId` / `value`），存一份到 `accounts/<id>/cookie-editor-export.json`；
+   再把这同一份 JSON 送进面板导入框用的 `parse_cookie_string()`，写盘写的是**导入结果**。
+   写盘前还有**回灌自检**：清空浏览器 cookie，只灌导入结果重新登录一遍（等价于
+   “Cookie-Editor 导出 → 粘贴导入 → 刷新”）；过不了直接判失败、**绝不写盘**。
    起不来或失败时才回退到 `curl_cffi` 的 HTTP 刷新。
 
 `AISTUDIO_COOKIE_KEEPALIVE_EXTRA`（默认 1）控制每轮额外带几个账号，0 = 只保活跃账号。
