@@ -621,7 +621,7 @@ async def _goto_url_with_abort_tolerance(
     return current_url
 
 
-async def navigate_to_aistudio(
+async def _navigate_once(
     page: CDPPage,
     auth_user: str = "0",
     auth_file: str | None = None,
@@ -700,3 +700,66 @@ async def navigate_to_aistudio(
 
     if last_exc is not None:
         raise last_exc
+
+def set_auth_user_in_meta(auth_file: str | None, auth_user: str) -> None:
+    """把实测可用的 auth_user 槽位写回 meta.json，后续请求头跟着改。"""
+    if not auth_file:
+        return
+    meta_path = Path(auth_file).parent / "meta.json"
+    try:
+        meta: dict[str, object] = {}
+        if meta_path.exists():
+            loaded = json.loads(meta_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                meta = loaded
+        if str(meta.get("auth_user")) == str(auth_user):
+            return
+        meta["auth_user"] = str(auth_user)
+        meta_path.write_text(
+            json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        log.info("已更正账号的 auth_user 槽位为 u/%s (%s)", auth_user, meta_path)
+    except Exception as e:
+        log.debug("写回 auth_user 失败: %s", e)
+
+
+async def navigate_to_aistudio(
+    page: CDPPage,
+    auth_user: str = "0",
+    auth_file: str | None = None,
+    verify_identity_cb: Callable[[CDPPage], Awaitable[bool]] | None = None,
+    save_cookies_cb: Callable[..., Awaitable[None]] | None = None,
+    on_auth_user_resolved: Callable[[str], None] | None = None,
+) -> None:
+    """打开 AI Studio；``u/N`` 槽位失效时回退到 ``u/0``。
+
+    auth.json 是从别的浏览器导出的，``meta.json`` 里记的槽位号是**那台浏览器**里的
+    位置。换到本机这条 profile 上，账号往往就是 0 号，``/u/5/`` 会被 Google 判成
+    "这个槽位没有会话" 直接踢登录页——看起来像 cookie 失效，其实号码不对。
+    所以这里在登录页重试失败后再跟一次 ``u/0``，并把实测可用的号码写回 meta。
+    """
+    try:
+        await _navigate_once(
+            page,
+            auth_user=auth_user,
+            auth_file=auth_file,
+            verify_identity_cb=verify_identity_cb,
+            save_cookies_cb=save_cookies_cb,
+        )
+        return
+    except SessionExpiredError as exc:
+        if str(auth_user) in ("", "0") or "已强制重新注入" not in str(exc):
+            raise
+        log.warning(
+            "auth_user=%s 槽位没有会话，回退到 u/0 重试（多半是导入时带的旧槽位号）",
+            auth_user,
+        )
+    await _navigate_once(
+        page,
+        auth_user="0",
+        auth_file=auth_file,
+        verify_identity_cb=verify_identity_cb,
+        save_cookies_cb=save_cookies_cb,
+    )
+    if on_auth_user_resolved is not None:
+        on_auth_user_resolved("0")

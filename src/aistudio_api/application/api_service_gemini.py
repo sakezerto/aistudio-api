@@ -648,6 +648,15 @@ def _build_gemini_streaming_response(
 
             if not stream_completed and last_stream_error is not None:
                 raise last_stream_error
+            if stream_completed and not has_yielded_data:
+                # HTTP 200 但一个文本分片都没出来：Google 会话异常/限流时会回这种
+                # 「200 + 错误包」，以前会被当成正常空回复直接透给客户端
+                empty_model = normalized.model if normalized else model_path
+                raise RuntimeError(
+                    "上游返回空响应：HTTP 200 但没有任何文本分片"
+                    f"（model={empty_model}, finish_reason={final_finish_reason}）。"
+                    "通常是 Google 会话异常或请求被限流，已判定为失败而非空回复。"
+                )
             target_model = normalized.model if normalized else model_path
             record_rotator_event("success", model=target_model, usage=final_usage)
             if normalized is not None:

@@ -136,3 +136,15 @@ docker compose -f docker-compose.ghcr.yml up -d
 
 - `data/`、`.env`、`.venv/` 都在 `.gitignore` 里，不会被提交
 - 想备份自己的版本：可以推到自己的私有仓库（`git remote add mine <url> && git push mine local`），不需要 fork 上游
+
+### u/N 槽位回退
+
+`meta.json` 里的 `auth_user` 是**导出那台浏览器**里的账号位置。账号换到本机 profile
+后通常就是 0 号，`/u/5/` 会被 Google 判成"这个槽位没有会话"直接踢登录页，看起来像
+cookie 失效。`navigate_to_aistudio()` 现在会在「已强制重新注入仍是登录页」之后再跟一次
+`u/0`，成功就把实测可用的槽位写回 `meta.json`；`X-Goog-AuthUser` 随之更正。
+
+### 空回判定
+
+流式接口以前只看"零字节"报错，Google 会话异常时回的 `200 + 错误包` 会被当成正常空
+回复。现在只要整轮没有任何文本分片就抛错，不再把空响应当成功。

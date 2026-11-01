@@ -37,6 +37,7 @@ from aistudio_api.infrastructure.gateway.session_auth import (
     load_cookies_to_page,
     navigate_to_aistudio,
     save_browser_cookies,
+    set_auth_user_in_meta,
 )
 from aistudio_api.infrastructure.gateway.session_state import (
     SessionContext,
@@ -232,11 +233,21 @@ class BrowserSession:
                     auth_file,
                     switching_account=old_context is not None,
                 )
+                resolved: dict[str, str] = {}
+
+                def _on_auth_user_resolved(value: str, file: str | None = auth_file) -> None:
+                    resolved["auth_user"] = value
+                    set_auth_user_in_meta(file, value)
+
                 await navigate_to_aistudio(
                     new_page,
                     auth_user=target_auth_user,
                     auth_file=auth_file,
+                    on_auth_user_resolved=_on_auth_user_resolved,
                 )
+                if resolved and resolved["auth_user"] != target_auth_user:
+                    target_auth_user = resolved["auth_user"]
+                    self._auth_user = target_auth_user
 
                 async def _reload_cb(page: CDPPage) -> bool:
                     return await load_cookies_to_page(
