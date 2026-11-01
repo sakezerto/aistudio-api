@@ -291,18 +291,19 @@ async def test_load_cookies_never_flushes_the_shared_jar(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_load_cookies_skips_overwrite_when_profile_session_is_live(tmp_path):
+async def test_load_cookies_skips_overwrite_when_profile_matches_auth(tmp_path):
+    """profile 与 auth.json 是同一个会话时才跳过注入。"""
     auth_file = tmp_path / "auth.json"
     _write_auth(
-        auth_file, [{"name": "SID", "value": "from_disk", "domain": ".google.com"}]
+        auth_file, [{"name": "SID", "value": "same", "domain": ".google.com"}]
     )
     cdp = _FakeCDP(
         {
             "Storage.getCookies": {
                 "cookies": [
                     {
-                        "name": "__Secure-1PSID",
-                        "value": "native",
+                        "name": "SID",
+                        "value": "same",
                         "domain": ".google.com",
                         "expires": -1,
                     }
@@ -315,8 +316,36 @@ async def test_load_cookies_skips_overwrite_when_profile_session_is_live(tmp_pat
     assert await load_cookies_to_page(page, str(auth_file)) is True
 
     assert cdp.calls("Network.setCookies") == [], (
-        "native DBSC-bound session was overwritten"
+        "同一个会话不该被覆盖注入"
     )
+
+
+@pytest.mark.asyncio
+async def test_load_cookies_injects_when_profile_credentials_were_revoked(tmp_path):
+    """profile 里的 SID 还没过期但值不同 —— 说明已被 Google 吊销，必须注入。"""
+    auth_file = tmp_path / "auth.json"
+    _write_auth(
+        auth_file, [{"name": "SID", "value": "fresh", "domain": ".google.com"}]
+    )
+    cdp = _FakeCDP(
+        {
+            "Storage.getCookies": {
+                "cookies": [
+                    {
+                        "name": "SID",
+                        "value": "revoked",
+                        "domain": ".google.com",
+                        "expires": 4102444800.0,
+                    }
+                ]
+            }
+        }
+    )
+    page = _page_with(cdp)
+
+    assert await load_cookies_to_page(page, str(auth_file)) is True
+
+    assert cdp.calls("Network.setCookies"), "吊销的 profile 会话没有被覆盖掉"
 
 
 @pytest.mark.asyncio

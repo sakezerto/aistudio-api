@@ -129,28 +129,43 @@ def _cookie_expiry(cookie: dict[str, object]) -> float:
         return -1.0
 
 
-async def _profile_has_live_credentials(page: CDPPage) -> bool:
-    """True when the browser profile already holds a usable Google session.
+def _credential_signature(
+    cookies: list[dict[str, object]] | None,
+) -> dict[str, str]:
+    """Pick the account-identifying cookies out of a cookie list."""
+    signature: dict[str, str] = {}
+    for cookie in cookies or []:
+        if not isinstance(cookie, dict):
+            continue
+        name = str(cookie.get("name") or "")
+        value = cookie.get("value")
+        if name in _NATIVE_CREDENTIAL_NAMES and value:
+            signature[name] = str(value)
+    return signature
 
-    A profile that logged in natively carries Google's DBSC device binding,
-    which a CDP ``setCookies`` overwrite cannot reproduce. Overwriting it
-    downgrades the session and breaks silent renewal.
+
+async def _profile_matches_auth(
+    page: CDPPage, auth_cookies: list[dict[str, object]]
+) -> bool:
+    """True only when the browser profile carries the *same* session as auth_file.
+
+    Presence of an unexpired ``SID`` proves nothing: the profile keeps cookies
+    whose values Google has already revoked, and injecting is the only way out.
+    Skipping on presence alone turns every revoked session into a hard failure,
+    so compare values and treat any divergence as "must inject".
     """
     try:
-        cookies = await page.get_cookies()
+        jar = await page.get_cookies()
     except Exception:
         return False
-    now = time.time()
-    for cookie in cookies:
-        if not isinstance(cookie, dict) or not cookie.get("value"):
-            continue
-        if str(cookie.get("name") or "") not in _NATIVE_CREDENTIAL_NAMES:
-            continue
-        expires = _cookie_expiry(cookie)
-        if expires > 0 and expires < now:
-            continue
-        return True
-    return False
+    jar_sig = _credential_signature(jar)
+    auth_sig = _credential_signature(auth_cookies)
+    if not jar_sig or not auth_sig:
+        return False
+    shared = set(jar_sig) & set(auth_sig)
+    if not shared:
+        return False
+    return all(jar_sig[name] == auth_sig[name] for name in shared)
 
 
 async def load_cookies_to_page(
@@ -181,11 +196,10 @@ async def load_cookies_to_page(
         if (
             not force_inject
             and not switching_account
-            and await _profile_has_live_credentials(page)
+            and await _profile_matches_auth(page, cookies)
         ):
             log.info(
-                "浏览器原生 Profile 已持有有效 Google 凭据，跳过覆盖注入 (auth_file=%s)",
-                auth_file,
+                "浏览器 Profile 与会话文件一致，跳过覆盖注入 (auth_file=%s)", auth_file
             )
             return True
 
@@ -587,7 +601,7 @@ async def navigate_to_aistudio(
                     "访问 AI Studio 后检测到重定向至登录页: %s，尝试重新注入 Cookie...",
                     current_url,
                 )
-                if not await load_cookies_to_page(page, auth_file):
+                if not await load_cookies_to_page(page, auth_file, force_inject=True):
                     raise SessionExpiredError(
                         f"Cookie 认证失败，已被重定向到 Google 登录页。 (url={current_url})"
                     )

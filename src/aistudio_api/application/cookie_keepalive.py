@@ -140,13 +140,17 @@ async def keepalive_account_in_browser(
     from aistudio_api.infrastructure.gateway.session_auth import save_browser_cookies
 
     account = path.parent.name
+    profile = path.parent / "profile"
+    if (profile / "SingletonLock").exists():
+        log.info("账号 %s 的 profile 正被主浏览器占用，本轮跳过", account)
+        return False
     port = _pick_free_port()
     proc = None
     client = None
     page = None
     try:
         proc = await asyncio.to_thread(
-            launch_chromium_process, port, str(path.parent / "profile"), headless=headless
+            launch_chromium_process, port, str(profile), headless=headless
         )
         client = CDPClient(port)
         await client.wait_until_ready(timeout_s=25.0)
