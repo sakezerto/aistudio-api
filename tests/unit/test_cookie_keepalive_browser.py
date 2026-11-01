@@ -12,19 +12,29 @@ from aistudio_api.infrastructure.gateway import session_auth
 
 
 class _Page:
-    def __init__(self, url: str, cookies: list[dict[str, object]] | None = None):
+    def __init__(
+        self,
+        url: str,
+        cookies: list[dict[str, object]] | None = None,
+        keep_jar: bool = True,
+    ):
+        self.keep_jar = keep_jar
         self.url = url
         self.closed = False
         self.cookies = cookies if cookies is not None else [{"name": "SID", "value": "x"}]
         self.injected: list[dict[str, object]] | None = None
         self.visited: list[str] = []
         self.fetched = False
+        self.cleared = False
 
     def is_closed(self) -> bool:
         return self.closed
 
     async def set_cookies(self, cookies):
+        # 模拟浏览器 cookie jar：注入即覆盖整份 jar
         self.injected = list(cookies)
+        if self.keep_jar:
+            self.cookies = list(cookies)
 
     async def goto(self, url: str, timeout_s: float = 30.0, **kwargs):
         self.visited.append(url)
@@ -36,6 +46,10 @@ class _Page:
     async def evaluate(self, expression: str, args=None, **kwargs):
         self.fetched = True
         return 200
+
+    async def clear_cookies(self):
+        self.cleared = True
+        self.cookies = []
 
     async def get_cookies(self):
         return self.cookies
@@ -99,7 +113,9 @@ async def test_browser_keepalive_success(tmp_path, monkeypatch):
     assert await kp.keepalive_account_in_browser(auth) is True
 
     assert page.injected == [{"name": "SID", "value": "seed"}]
-    assert any("accounts.google.com" in u for u in page.visited), "没有模拟登录引导"
+    assert page.cleared is True, "没有做回灌自检（清空后只用导出的 cookie 重登）"
+    google_hits = [u for u in page.visited if "accounts.google.com" in u]
+    assert len(google_hits) >= 2, "自检那一轮没有重新走登录引导"
     assert any("aistudio.google.com" in u for u in page.visited), "没有打开 AI Studio"
     assert len(saved) == 1  # 已回写 auth.json
     assert saved[0][3] is True, "保活必须全量覆盖，而不是增量合并"
@@ -148,7 +164,11 @@ async def test_browser_keepalive_handles_launch_failure(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_browser_keepalive_rejects_empty_cookie_jar(tmp_path, monkeypatch):
     auth = _make_account(tmp_path)
-    page = _Page("https://aistudio.google.com/app/prompts/new_chat", cookies=[])
+    page = _Page(
+        "https://aistudio.google.com/app/prompts/new_chat",
+        cookies=[],
+        keep_jar=False,
+    )
     proc = _Proc()
     _client, saved = _patch_browser(monkeypatch, page, proc)
 

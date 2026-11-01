@@ -169,14 +169,29 @@ async def keepalive_account_in_browser(
             log.warning("账号 %s 保活失败: 登录流程仍停在 Google 登录页", account)
             return False
 
-        fresh = await page.get_cookies()
-        if not fresh:
+        exported = await page.get_cookies()
+        if not exported:
             log.warning("账号 %s 保活失败: 浏览器没有返回任何 cookie", account)
             return False
 
-        await save_browser_cookies(page, str(path), fresh, replace=True)
+        # 回灌自检：清空浏览器，只用刚导出的这一份重新登录一次。
+        # 这一步等价于「手动导出 → 导入 → 刷新页面」，能过才说明导出的 cookie 自足，
+        # 否则写回去也只是一份登不上去的快照。
+        await page.clear_cookies()
+        await page.set_cookies(exported)
+        await bootstrap_google_session(page)
+        verify_url = page.url or ""
+        if "accounts.google.com" in verify_url or "ServiceLogin" in verify_url:
+            log.warning(
+                "账号 %s 保活失败: 导出的 cookie 无法独立登录，需要重新导出", account
+            )
+            return False
+
+        verified = await page.get_cookies()
+        final = verified or exported
+        await save_browser_cookies(page, str(path), final, replace=True)
         log.info(
-            "账号 %s 保活完成: 浏览器登录成功，已全量覆盖 %d 条 cookie", account, len(fresh)
+            "账号 %s 保活完成: 回灌自检通过，已全量覆盖 %d 条 cookie", account, len(final)
         )
         return True
     except Exception as e:
