@@ -321,8 +321,8 @@ async def test_load_cookies_skips_overwrite_when_profile_matches_auth(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_load_cookies_injects_when_profile_credentials_were_revoked(tmp_path):
-    """profile 里的 SID 还没过期但值不同 —— 说明已被 Google 吊销，必须注入。"""
+async def test_load_cookies_force_inject_overrides_live_profile(tmp_path):
+    """登录页重试走 force_inject：profile 看着活着也必须重注入。"""
     auth_file = tmp_path / "auth.json"
     _write_auth(
         auth_file, [{"name": "SID", "value": "fresh", "domain": ".google.com"}]
@@ -343,9 +343,8 @@ async def test_load_cookies_injects_when_profile_credentials_were_revoked(tmp_pa
     )
     page = _page_with(cdp)
 
-    assert await load_cookies_to_page(page, str(auth_file)) is True
-
-    assert cdp.calls("Network.setCookies"), "吊销的 profile 会话没有被覆盖掉"
+    assert await load_cookies_to_page(page, str(auth_file), force_inject=True) is True
+    assert cdp.calls("Network.setCookies"), "force_inject 下没有覆盖注入"
 
 
 @pytest.mark.asyncio

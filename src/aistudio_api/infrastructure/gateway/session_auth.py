@@ -129,6 +129,57 @@ def _cookie_expiry(cookie: dict[str, object]) -> float:
         return -1.0
 
 
+async def _profile_has_live_credentials(page: CDPPage) -> bool:
+    """True when the profile still carries an unexpired Google session.
+
+    Do not compare values here: the profile's ``SID`` legitimately rotates ahead
+    of the auth.json snapshot, and overwriting a live profile with the older
+    snapshot kills a working session. A profile that has been *revoked* is caught
+    by the login redirect in :func:`navigate_to_aistudio`, which force-injects.
+    """
+    try:
+        cookies = await page.get_cookies()
+    except Exception:
+        return False
+    now = time.time()
+    for cookie in cookies:
+        if not isinstance(cookie, dict) or not cookie.get("value"):
+            continue
+        if str(cookie.get("name") or "") not in _NATIVE_CREDENTIAL_NAMES:
+            continue
+        expires = _cookie_expiry(cookie)
+        if expires > 0 and expires < now:
+            continue
+        return True
+    return False
+
+
+_CREDENTIAL_PROBES = (
+    "SID",
+    "__Secure-1PSID",
+    "__Secure-3PSID",
+    "LSID",
+    "__Host-1PLSID",
+    "__Host-3PLSID",
+    "__Host-GAPS",
+    "__Secure-1PSIDTS",
+    "__Secure-3PSIDTS",
+    "ACCOUNT_CHOOSER",
+)
+
+
+def describe_credentials(cookies: list[dict[str, object]] | None) -> str:
+    """Summarise which credentials a cookie set carries (names only, no values)."""
+    present = {
+        str(c.get("name"))
+        for c in (cookies or [])
+        if isinstance(c, dict) and c.get("value")
+    }
+    return "凭据=" + ",".join(
+        f"{name}:{'有' if name in present else '缺'}" for name in _CREDENTIAL_PROBES
+    )
+
+
 def _credential_signature(
     cookies: list[dict[str, object]] | None,
 ) -> dict[str, str]:
@@ -142,30 +193,6 @@ def _credential_signature(
         if name in _NATIVE_CREDENTIAL_NAMES and value:
             signature[name] = str(value)
     return signature
-
-
-async def _profile_matches_auth(
-    page: CDPPage, auth_cookies: list[dict[str, object]]
-) -> bool:
-    """True only when the browser profile carries the *same* session as auth_file.
-
-    Presence of an unexpired ``SID`` proves nothing: the profile keeps cookies
-    whose values Google has already revoked, and injecting is the only way out.
-    Skipping on presence alone turns every revoked session into a hard failure,
-    so compare values and treat any divergence as "must inject".
-    """
-    try:
-        jar = await page.get_cookies()
-    except Exception:
-        return False
-    jar_sig = _credential_signature(jar)
-    auth_sig = _credential_signature(auth_cookies)
-    if not jar_sig or not auth_sig:
-        return False
-    shared = set(jar_sig) & set(auth_sig)
-    if not shared:
-        return False
-    return all(jar_sig[name] == auth_sig[name] for name in shared)
 
 
 async def load_cookies_to_page(
@@ -193,15 +220,15 @@ async def load_cookies_to_page(
         if not cookies:
             return False
 
-        if (
-            not force_inject
-            and not switching_account
-            and await _profile_matches_auth(page, cookies)
-        ):
+        live = await _profile_has_live_credentials(page)
+        if not force_inject and not switching_account and live:
             log.info(
-                "浏览器 Profile 与会话文件一致，跳过覆盖注入 (auth_file=%s)", auth_file
+                "浏览器原生 Profile 已持有有效 Google 凭据，跳过覆盖注入 (auth_file=%s)",
+                auth_file,
             )
             return True
+        if force_inject and live:
+            log.info("强制重新注入 Cookie（profile 会话已被判定失效）")
 
         cleaned_cookies = [
             c
@@ -217,9 +244,10 @@ async def load_cookies_to_page(
         ]
         await page.set_cookies(cleaned_cookies or cookies)
         log.info(
-            "已向页面载入 %d 个 Cookie (auth_file=%s)",
+            "已向页面载入 %d 个 Cookie (auth_file=%s) %s",
             len(cleaned_cookies or cookies),
             auth_file,
+            describe_credentials(cleaned_cookies or cookies),
         )
         return True
     except Exception as e:
@@ -616,7 +644,8 @@ async def navigate_to_aistudio(
                     current_url
                 ):
                     raise SessionExpiredError(
-                        f"Cookie 认证失败，重新注入并导航后仍处于登录页。 (url={current_url})"
+                        "Cookie 认证失败：已强制重新注入该账号的凭据，仍被 Google "
+                        f"重定向到登录页，说明 cookie 已在服务端失效，需要重新导出导入。 (url={current_url})"
                     )
 
             for _ in range(15):
