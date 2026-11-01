@@ -504,8 +504,15 @@ async def save_browser_cookies(
     page: CDPPage,
     auth_file: str | None,
     cookies: list[dict[str, object]] | None = None,
+    *,
+    replace: bool = False,
 ) -> None:
-    """Save browser cookies back to auth_file JSON atomically."""
+    """Save browser cookies back to auth_file JSON atomically.
+
+    ``replace=True`` writes the browser's full jar as the new truth instead of
+    merging it into the previous snapshot - used by keepalive, where the browser
+    is the authority and a stale entry must not survive.
+    """
     if not auth_file:
         return
     try:
@@ -535,6 +542,16 @@ async def save_browser_cookies(
                     existing_cookies = [
                         c for c in raw_existing if isinstance(c, dict)
                     ]
+        if replace:
+            merged = [c for c in current_cookies if isinstance(c, dict)]
+            atomic_write_json(auth_path, {"cookies": merged, "origins": origins})
+            log.info(
+                "已用浏览器全量 Cookie 覆盖 %s (共 %d 条，旧快照 %d 条已丢弃)",
+                auth_file,
+                len(merged),
+                len(existing_cookies),
+            )
+            return
         merged = merge_cookie_sets(existing_cookies, current_cookies)
         atomic_write_json(auth_path, {"cookies": merged, "origins": origins})
         log.info(

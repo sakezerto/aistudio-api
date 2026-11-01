@@ -53,7 +53,7 @@ async def test_keepalive_touches_page_and_writes_back(monkeypatch):
     assert "credentials: 'include'" in expression
     assert "cache: 'no-store'" in expression
     assert kwargs["timeout_s"] == 12.0
-    saved.assert_awaited_once_with(page, "auth.json")
+    saved.assert_awaited_once_with(page, "auth.json", replace=True)
 
 
 @pytest.mark.asyncio

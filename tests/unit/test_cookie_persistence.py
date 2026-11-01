@@ -237,6 +237,29 @@ async def test_save_browser_cookies_merges_instead_of_overwriting(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_save_browser_cookies_replace_drops_stale_entries(tmp_path):
+    """replace=True：浏览器全量 jar 就是新真源，旧快照里的死条目必须消失。"""
+    auth_file = tmp_path / "auth.json"
+    _write_auth(
+        auth_file,
+        [
+            {"name": "SID", "value": "dead", "domain": ".google.com"},
+            {"name": "OLD_ONLY", "value": "stale", "domain": ".google.com"},
+        ],
+    )
+    cdp = _FakeCDP()
+    page = _page_with(cdp)
+    fresh = [{"name": "SID", "value": "live", "domain": ".google.com"}]
+
+    await save_browser_cookies(page, str(auth_file), fresh, replace=True)
+
+    saved = json.loads(auth_file.read_text(encoding="utf-8"))
+    names = {c["name"]: c["value"] for c in saved["cookies"]}
+    assert names == {"SID": "live"}
+    assert "OLD_ONLY" not in names
+
+
+@pytest.mark.asyncio
 async def test_save_browser_cookies_skips_login_page(tmp_path):
     auth_file = tmp_path / "auth.json"
     _write_auth(auth_file, [{"name": "SID", "value": "keep", "domain": ".google.com"}])

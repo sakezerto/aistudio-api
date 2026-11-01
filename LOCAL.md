@@ -81,9 +81,12 @@ docker compose -f docker-compose.local.yml up -d --build
 1. **当前激活账号**：在浏览器里发一次同源 fetch，让 Google 轮换 `__Secure-1PSIDTS`，
    然后立刻回写 `auth.json`（这条最可靠，能拿到真实 Set-Cookie）。
 2. **下一个账号**：按注册表顺序轮转，用**该账号自己的 profile** 起一个短命浏览器
-   （同一个 CloakBrowser 二进制、同一个 profile 目录），打开 AI Studio、回写 cookie、
-   然后关掉。TLS 指纹、设备密钥、DBSC 绑定都和正常使用时一致，这是唯一能让
-   `__Secure-1PSIDTS` 真正滚动的方式。起不来或失败时才回退到 `curl_cffi` 的 HTTP 刷新。
+   （同一个 CloakBrowser 二进制、同一个 profile 目录），注入现有 cookie 后**模拟一次
+   真实登录**（accounts.google.com 引导 → AI Studio），然后把浏览器里**所有域的全量
+   cookie 整份覆盖**回 `auth.json`（`replace=True`，旧快照直接丢弃，不再增量合并），
+   最后关掉浏览器。TLS 指纹、设备密钥、DBSC 绑定都和正常使用时一致，这是唯一能让
+   `__Secure-1PSIDTS` 真正滚动的方式。登录停在 Google 登录页时判定失败，**绝不写盘**。
+   起不来或失败时才回退到 `curl_cffi` 的 HTTP 刷新。
 
 `AISTUDIO_COOKIE_KEEPALIVE_EXTRA`（默认 1）控制每轮额外带几个账号，0 = 只保活跃账号。
 `AISTUDIO_COOKIE_KEEPALIVE_BROWSER`（默认 1）控制非活跃账号是否走浏览器；设 0 则只用

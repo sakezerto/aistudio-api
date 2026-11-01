@@ -528,7 +528,8 @@ class BrowserSession:
             return False
         if self._auth_file:
             with suppress(Exception):
-                await save_browser_cookies(page, self._auth_file)
+                # 浏览器是唯一真源：整份覆盖，别让旧快照里的死条目留下来
+                await save_browser_cookies(page, self._auth_file, replace=True)
         return True
 
     async def import_cookies(

@@ -17,6 +17,7 @@ class _Page:
         self.closed = False
         self.cookies = cookies if cookies is not None else [{"name": "SID", "value": "x"}]
         self.injected: list[dict[str, object]] | None = None
+        self.visited: list[str] = []
         self.fetched = False
 
     def is_closed(self) -> bool:
@@ -25,8 +26,9 @@ class _Page:
     async def set_cookies(self, cookies):
         self.injected = list(cookies)
 
-    async def goto(self, url: str, timeout_s: float = 30.0):
-        return None
+    async def goto(self, url: str, timeout_s: float = 30.0, **kwargs):
+        self.visited.append(url)
+        return
 
     async def wait_for_timeout(self, ms: float):
         return None
@@ -80,8 +82,8 @@ def _patch_browser(monkeypatch, page, proc):
     monkeypatch.setattr(cdp_module, "CDPClient", lambda *a, **k: client)
     saved: list[tuple[object, str, object]] = []
 
-    async def fake_save(p, auth_file, cookies=None):
-        saved.append((p, auth_file, cookies))
+    async def fake_save(p, auth_file, cookies=None, **kwargs):
+        saved.append((p, auth_file, cookies, kwargs.get("replace")))
 
     monkeypatch.setattr(session_auth, "save_browser_cookies", fake_save)
     return client, saved
@@ -97,8 +99,10 @@ async def test_browser_keepalive_success(tmp_path, monkeypatch):
     assert await kp.keepalive_account_in_browser(auth) is True
 
     assert page.injected == [{"name": "SID", "value": "seed"}]
-    assert page.fetched is True
+    assert any("accounts.google.com" in u for u in page.visited), "没有模拟登录引导"
+    assert any("aistudio.google.com" in u for u in page.visited), "没有打开 AI Studio"
     assert len(saved) == 1  # 已回写 auth.json
+    assert saved[0][3] is True, "保活必须全量覆盖，而不是增量合并"
     assert client.closed is True
     assert proc.terminated is True
 
