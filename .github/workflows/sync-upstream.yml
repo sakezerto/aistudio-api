@@ -1,0 +1,92 @@
+name: Sync Upstream
+
+# 定时把上游 DeconstructedCube/aistudio-api@master 快进合并进本 fork 的 master。
+# 合并成功后的 push 会自动触发 docker-publish.yml 构建镜像；
+# 上游无更新时不产生 push，也就不构建，零浪费。
+# 只读 fetch 上游，绝不向其提交 PR / issue；失败只写 workflow summary 告警。
+# 全程只用内置 GITHUB_TOKEN，无需任何 Secrets。
+
+on:
+  schedule:
+    # 每天两次（UTC）：00:00 和 12:00
+    # → 北京时间当天 08:00 和 20:00（中国 UTC+8，全年无夏令时，固定 +8）
+    - cron: "0 0,12 * * *"
+  # 手动触发：Actions 页 → Sync Upstream → Run workflow
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  UPSTREAM_REPO: DeconstructedCube/aistudio-api
+  UPSTREAM_BRANCH: master
+
+jobs:
+  sync:
+    name: Fast-forward fork from upstream
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fast-forward merge upstream
+        id: sync
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # 只读 fetch 上游，绝不向其推送
+          git remote add upstream "https://github.com/${UPSTREAM_REPO}.git" 2>/dev/null || true
+          git fetch --no-tags --prune upstream "${UPSTREAM_BRANCH}"
+          UP="$(git rev-parse FETCH_HEAD)"
+          echo "upstream_sha=$UP" >> "$GITHUB_OUTPUT"
+          echo "上游最新提交: $UP"
+
+          if git merge-base --is-ancestor "$UP" HEAD; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::fork 已包含上游全部提交，无需同步"
+          elif git merge-base --is-ancestor HEAD "$UP"; then
+            git merge --ff-only "$UP"
+            git push origin "HEAD:master"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::已快进合并上游 $UP 并推送"
+          else
+            # fork 与上游已分叉（fork 有独有提交且上游也前进了）：
+            # 不自动 merge、不强推，只告警，由人工处理，避免丢提交或污染上游。
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "diverged=true" >> "$GITHUB_OUTPUT"
+            echo "::error::fork 与上游已分叉，无法快进合并，请人工 rebase/merge 后推送"
+            exit 1
+          fi
+
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Write summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### 上游同步结果"
+            echo ""
+            echo "| 项 | 值 |"
+            echo "|---|---|"
+            echo "| 上游仓库 | \`${UPSTREAM_REPO}@${UPSTREAM_BRANCH}\` |"
+            echo "| 上游提交 | \`${{ steps.sync.outputs.upstream_sha }}\` |"
+            echo "| fork 提交 | \`${{ steps.sync.outputs.sha }}\` |"
+            echo "| 是否有更新 | \`${{ steps.sync.outputs.changed }}\` |"
+            if [ "${{ steps.sync.outputs.diverged }}" = "true" ]; then
+              echo "| 分叉告警 | \`true：需人工处理\` |"
+            fi
+            echo ""
+            echo "> 定时：每天 UTC 00:00 / 12:00（北京时间 08:00 / 20:00）。"
+            echo "> 有更新时 push 到 master 会自动触发 Docker (GHCR) 构建镜像。"
+            echo "> 失败只记录在此 summary，不开 issue、不碰上游仓库。"
+          } >> "$GITHUB_STEP_SUMMARY"
