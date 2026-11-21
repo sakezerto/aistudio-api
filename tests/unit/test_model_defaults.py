@@ -257,11 +257,15 @@ tier_quotas:
 """
     )
 
-    h_free = resolve_tier_quota_limits("Free", "gemini-4-hydrogen", config_path=config_path)
+    h_free = resolve_tier_quota_limits(
+        "Free", "gemini-4-hydrogen", config_path=config_path
+    )
     assert h_free.daily_limit == 50
     assert h_free.daily_token_limit == 10_000_000
 
-    f_free = resolve_tier_quota_limits("Free", "gemini-3.6-flash", config_path=config_path)
+    f_free = resolve_tier_quota_limits(
+        "Free", "gemini-3.6-flash", config_path=config_path
+    )
     assert f_free.daily_limit == 50
     assert f_free.daily_token_limit == 5_000_000
 
@@ -269,15 +273,21 @@ tier_quotas:
     assert a_pro.daily_limit == 50
     assert a_pro.daily_token_limit == 15_000_000
 
-    p_pro = resolve_tier_quota_limits("Pro", "gemini-3.1-pro-preview", config_path=config_path)
+    p_pro = resolve_tier_quota_limits(
+        "Pro", "gemini-3.1-pro-preview", config_path=config_path
+    )
     assert p_pro.daily_limit == 50
     assert p_pro.daily_token_limit == 13_000_000
 
-    ov_obj = resolve_tier_quota_limits("Free", "models/gemini-3.8-flash", config_path=config_path)
+    ov_obj = resolve_tier_quota_limits(
+        "Free", "models/gemini-3.8-flash", config_path=config_path
+    )
     assert ov_obj.daily_limit == 120
     assert ov_obj.daily_token_limit == 8_000_000
 
-    ov_scalar = resolve_tier_quota_limits("Free", "gemini-legacy", config_path=config_path)
+    ov_scalar = resolve_tier_quota_limits(
+        "Free", "gemini-legacy", config_path=config_path
+    )
     assert ov_scalar.daily_limit == 33
     assert ov_scalar.daily_token_limit is None
 
@@ -288,17 +298,61 @@ def test_repo_config_matches_playground_quotas_and_paid_tiers(monkeypatch):
 
     invalidate_config_cache()
 
-    assert resolve_tier_quota_limits("Free", "gemini-4-hydrogen", config_path=repo_config) == (
-        resolve_tier_quota_limits("Free", "models/gemini-4-hydrogen", config_path=repo_config)
+    assert resolve_tier_quota_limits(
+        "Free", "gemini-4-hydrogen", config_path=repo_config
+    ) == (
+        resolve_tier_quota_limits(
+            "Free", "models/gemini-4-hydrogen", config_path=repo_config
+        )
     )
-    assert resolve_tier_quota_limits("Free", "gemini-4-hydrogen", config_path=repo_config).daily_limit == 50
-    assert resolve_tier_quota_limits("Free", "gemini-4-hydrogen", config_path=repo_config).daily_token_limit == 10_000_000
-    assert resolve_tier_quota_limits("Pro", "gemini-4-hydrogen", config_path=repo_config).daily_limit == 100
-    assert resolve_tier_quota_limits("Pro", "gemini-4-hydrogen", config_path=repo_config).daily_token_limit == 25_000_000
-    assert resolve_tier_quota_limits("Ultra", "gemini-4-carbon", config_path=repo_config).daily_limit == 200
-    assert resolve_tier_quota_limits("Ultra_20X", "gemini-4-carbon", config_path=repo_config).daily_limit == 200
-    assert resolve_tier_quota_limits("Ultra", "gemini-3.1-pro-preview", config_path=repo_config).daily_limit == 100
-    assert resolve_tier_quota_limits("Ultra_20X", "gemini-3.1-pro-preview", config_path=repo_config).daily_limit == 100
+    assert (
+        resolve_tier_quota_limits(
+            "Free", "gemini-4-hydrogen", config_path=repo_config
+        ).daily_limit
+        == 50
+    )
+    assert (
+        resolve_tier_quota_limits(
+            "Free", "gemini-4-hydrogen", config_path=repo_config
+        ).daily_token_limit
+        == 10_000_000
+    )
+    assert (
+        resolve_tier_quota_limits(
+            "Pro", "gemini-4-hydrogen", config_path=repo_config
+        ).daily_limit
+        == 100
+    )
+    assert (
+        resolve_tier_quota_limits(
+            "Pro", "gemini-4-hydrogen", config_path=repo_config
+        ).daily_token_limit
+        == 25_000_000
+    )
+    assert (
+        resolve_tier_quota_limits(
+            "Ultra", "gemini-4-carbon", config_path=repo_config
+        ).daily_limit
+        == 200
+    )
+    assert (
+        resolve_tier_quota_limits(
+            "Ultra_20X", "gemini-4-carbon", config_path=repo_config
+        ).daily_limit
+        == 200
+    )
+    assert (
+        resolve_tier_quota_limits(
+            "Ultra", "gemini-3.1-pro-preview", config_path=repo_config
+        ).daily_limit
+        == 100
+    )
+    assert (
+        resolve_tier_quota_limits(
+            "Ultra_20X", "gemini-3.1-pro-preview", config_path=repo_config
+        ).daily_limit
+        == 100
+    )
 
     svc = ModelDiscoveryService()
     assert svc.is_paid_model("gemini-4-hydrogen") is False
@@ -306,6 +360,12 @@ def test_repo_config_matches_playground_quotas_and_paid_tiers(monkeypatch):
     assert svc.is_paid_model("gemini-4-argon") is True
     assert svc.is_model_allowed_for_tier("gemini-4-argon", "Free") is False
     assert svc.is_model_allowed_for_tier("gemini-4-argon", "Pro") is True
+    assert svc.is_paid_model("gemini-4-neon") is True
+    assert svc.is_model_allowed_for_tier("gemini-4-neon", "Free") is False
+    assert svc.is_model_allowed_for_tier("gemini-4-neon", "Pro") is True
+    assert resolve_tier_quota_limits(
+        "Pro", "gemini-4-neon", config_path=repo_config
+    ) == resolve_tier_quota_limits("Pro", "gemini-4-argon", config_path=repo_config)
     assert svc.is_paid_model("gemini-4-carbon") is True
     assert svc.is_model_allowed_for_tier("gemini-4-carbon", "Pro") is False
     assert svc.is_model_allowed_for_tier("gemini-4-carbon", "Ultra") is True
@@ -321,20 +381,75 @@ def test_validate_config_sections_rejects_invalid_quota_and_rotator():
         {
             "tier_quotas": {
                 "Free": {
-                    "flash_models": {"match": {"contains": ["flash"]}, "daily_limit": 50, "daily_token_limit": 5000000},
+                    "flash_models": {
+                        "match": {"contains": ["flash"]},
+                        "daily_limit": 50,
+                        "daily_token_limit": 5000000,
+                    },
                     "default_limit": 20,
                 },
-                "overrides": {"gemini-3.8-flash": {"daily_limit": 60, "daily_token_limit": None}},
+                "overrides": {
+                    "gemini-3.8-flash": {"daily_limit": 60, "daily_token_limit": None}
+                },
             },
             "paid_model_rules": {
-                "ultra_required": {"contains": ["carbon"], "required_tiers": ["Ultra", "Ultra_20X"]}
+                "ultra_required": {
+                    "contains": ["carbon"],
+                    "required_tiers": ["Ultra", "Ultra_20X"],
+                }
             },
-            "rotator": {"strategy": "sticky", "stickiness_threshold": 0.8, "tier_weights": {"Free": 0.0}},
+            "rotator": {
+                "strategy": "sticky",
+                "stickiness_threshold": 0.8,
+                "tier_weights": {"Free": 0.0},
+            },
         }
     )
 
     with pytest.raises(ValueError, match="daily_limit"):
-        validate_config_sections({"tier_quotas": {"Free": {"flash": {"daily_limit": 0}}}})
+        validate_config_sections(
+            {"tier_quotas": {"Free": {"flash": {"daily_limit": 0}}}}
+        )
 
     with pytest.raises(ValueError, match="stickiness_threshold"):
         validate_config_sections({"rotator": {"stickiness_threshold": 1.5}})
+
+
+def test_partial_rotator_config_deep_merges_defaults_without_key_error(
+    tmp_path, monkeypatch
+):
+    from unittest.mock import MagicMock
+
+    from aistudio_api.application.account_rotator import AccountRotator, AccountStats
+    from aistudio_api.infrastructure.account.account_store import (
+        AccountMeta,
+        AccountStore,
+    )
+    from aistudio_api.infrastructure.gateway.model_defaults import (
+        get_configured_rotator_settings,
+        invalidate_config_cache,
+    )
+
+    partial_cfg = tmp_path / "partial_rotator.yaml"
+    partial_cfg.write_text("rotator:\n  max_retries: 3\n", encoding="utf-8")
+    monkeypatch.setenv("AISTUDIO_CONFIG_FILE", str(partial_cfg))
+    invalidate_config_cache()
+
+    rot_cfg = get_configured_rotator_settings(partial_cfg)
+    assert rot_cfg["max_retries"] == 3
+    assert isinstance(rot_cfg["tier_weights"], dict)
+    assert isinstance(rot_cfg["cooldowns"], dict)
+
+    store = MagicMock(spec=AccountStore)
+    acc = AccountMeta(
+        id="acc_1", name="Test", email="t@example.com", created_at="2026-01-01"
+    )
+    store.list_accounts.return_value = [acc]
+    rotator = AccountRotator(store)
+    stats = AccountStats(account_id="acc_1")
+    score = rotator._score_candidate(
+        acc, stats, "gemini-3.8-flash", current_account_id="acc_1"
+    )
+    assert isinstance(score, float)
+    stats.record_rate_limited("gemini-3.8-flash")
+    assert stats.get_cooldown_remaining("gemini-3.8-flash") > 0

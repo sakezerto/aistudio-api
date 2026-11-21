@@ -1,23 +1,4 @@
 api_keys: []
-waa:
-  active_server: local_spidermonkey
-  servers:
-  - id: local_spidermonkey
-    name: 本地 Go 签名服务 (SpiderMonkey 152)
-    description: 本地独立 Go 进程，基于 SpiderMonkey 152 与 Firefox 152 环境生成签名
-    url: http://127.0.0.1:8081
-    user_agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:152.0) Gecko/20100101
-      Firefox/152.0
-    headers:
-      X-User-Agent: grpc-web-javascript/0.1
-  - id: remote_spinsnow
-    name: 远程签名服务 (spinsnow / NodeVM)
-    description: 远程 Node.js VM 签名服务，模拟 Chromium 运行环境
-    url: https://waa.spinsnow.fun
-    user_agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
-      like Gecko) Chrome/151.0.0.0 Safari/537.36
-    headers:
-      X-User-Agent: grpc-web-javascript/0.1
 logging:
   level: INFO
   dump_requests: false
@@ -52,6 +33,7 @@ paid_model_rules:
   pro_required:
     contains:
     - argon
+    - neon
     - image
     - imagen
     - gemini-3.1-pro
@@ -148,6 +130,7 @@ tier_quotas:
       match:
         contains:
         - argon
+        - neon
       daily_limit: 50
       daily_token_limit: 15000000
     image_models:
@@ -179,6 +162,7 @@ tier_quotas:
       match:
         contains:
         - argon
+        - neon
       daily_limit: 200
     carbon_models:
       match:
@@ -217,6 +201,7 @@ tier_quotas:
       match:
         contains:
         - argon
+        - neon
       daily_limit: 200
     carbon_models:
       match:

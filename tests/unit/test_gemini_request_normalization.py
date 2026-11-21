@@ -900,3 +900,15 @@ def test_normalize_gemini_request_deduplicates_and_covers_builtin_tools():
     assert len(normalized.tools) == 2
     assert [[]] in normalized.tools
     assert [None, None, None, [None, [[]]]] in normalized.tools
+
+
+def test_normalize_gemini_request_rejects_unsupported_thinking_level():
+    """Verify unsupported thinkingLevel values raise ValueError instead of silent coercion."""
+    req_max = GeminiGenerateContentRequest.model_validate(
+        {
+            "contents": [{"role": "user", "parts": [{"text": "Hello"}]}],
+            "generationConfig": {"thinkingConfig": {"thinkingLevel": "MAX"}},
+        }
+    )
+    with pytest.raises(ValueError, match="Unsupported thinkingLevel"):
+        normalize_gemini_request(req_max, "gemini-4-hydrogen")

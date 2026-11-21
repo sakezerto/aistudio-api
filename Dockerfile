@@ -9,15 +9,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     file \
     && rm -rf /var/lib/apt/lists/* \
-    && curl -fsSL https://ziglang.org/download/0.16.0/zig-$(uname -m)-linux-0.16.0.tar.xz | tar -xJ -C /opt \
+    && curl -fsSL https://ziglang.org/download/0.17.1/zig-$(uname -m)-linux-0.17.1.tar.xz | tar -xJ -C /opt \
     && mv /opt/zig-* /opt/zig \
     && ln -s /opt/zig/zig /usr/local/bin/zig
 
 COPY waa-signer/ waa-signer/
 WORKDIR /build/waa-signer
-RUN if [ ! -f "bin/waa-signer" ] || ! file bin/waa-signer | grep -q "ELF"; then \
-        chmod +x build.sh && ./build.sh; \
-    fi
+RUN chmod +x build.sh && ./build.sh
 
 # Stage 2: Runtime Python environment
 # Use Debian 12 (bookworm) explicitly so package names stay stable.
@@ -66,7 +64,7 @@ EXPOSE 8080
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8080/v1beta/models || exit 1
+    CMD curl -f http://localhost:8080/health || exit 1
 
 # Container entrypoint and default command
 ENTRYPOINT ["/app/docker-entrypoint.sh"]

@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
 from aistudio_api.infrastructure.account.cookie_parser import (
     build_makersuite_headers,
+    filter_minimal_cookies,
     load_cookies_from_auth_file,
 )
 from aistudio_api.infrastructure.utils.logger import get_logger
@@ -83,6 +84,25 @@ def _extract_model_aliases(raw: object) -> list[str]:
 
 # 本地保底默认模型列表（当网络未就绪或未配置账号时使用）
 _FALLBACK_MODELS = [
+    {
+        "id": "gemini-4-hydrogen",
+        "displayName": "Gemini 4 Hydrogen",
+        "description": "Gemini 4 Hydrogen flagship model",
+    },
+    {
+        "id": "gemini-4-argon",
+        "displayName": "Gemini 4 Argon",
+        "description": "Gemini 4 Argon Pro flagship model",
+        "paid": True,
+        "accessModes": [3],
+    },
+    {
+        "id": "gemini-4-neon",
+        "displayName": "Gemini 4 Neon",
+        "description": "Gemini 4 Neon Pro flagship model",
+        "paid": True,
+        "accessModes": [3],
+    },
     {
         "id": "gemini-3.8-flash",
         "displayName": "Gemini 3.8 Flash",
@@ -187,9 +207,15 @@ class ModelDiscoveryService:
         self._cache_ttl = cache_ttl_seconds
         self._cached_models: list[dict[str, object]] = []
         self._last_fetched_at: float = 0.0
+        self._is_fallback: bool = False
         self._quota_family_map: dict[str, str] = {}
         self._quota_family_members: dict[str, list[str]] = {}
         self._lock = asyncio.Lock()
+
+    def invalidate_cache(self) -> None:
+        """Clear cached upstream model list so next discovery uses updated account/tier."""
+        self._last_fetched_at = 0.0
+        self._is_fallback = False
 
     async def get_models(
         self,
@@ -203,6 +229,7 @@ class ModelDiscoveryService:
         now = time.time()
         if (
             not force_refresh
+            and not self._is_fallback
             and self._cached_models
             and (now - self._last_fetched_at < self._cache_ttl)
         ):
@@ -212,12 +239,11 @@ class ModelDiscoveryService:
             # 双重检查
             if (
                 not force_refresh
+                and not self._is_fallback
                 and self._cached_models
                 and (time.time() - self._last_fetched_at < self._cache_ttl)
             ):
                 return self._cached_models
-
-            # 1. 通过直接 HTTP 协议拉取
             effective_cookies = cookies
             effective_auth_user = auth_user
             effective_tier = "Free"
@@ -263,6 +289,7 @@ class ModelDiscoveryService:
                     if models:
                         self._cached_models = models
                         self._last_fetched_at = time.time()
+                        self._is_fallback = False
                         logger.info("已更新上游模型列表: count=%d", len(models))
                         try:
                             await self._fetch_quota_models_via_http(
@@ -278,6 +305,7 @@ class ModelDiscoveryService:
             if not self._cached_models:
                 self._cached_models = [dict(m) for m in _FALLBACK_MODELS]
                 self._last_fetched_at = time.time()
+                self._is_fallback = True
 
             return self._cached_models
 
@@ -351,15 +379,11 @@ class ModelDiscoveryService:
         raw_modes = info.get("accessModes")
         if not isinstance(raw_modes, list) or not raw_modes:
             return True
-        norm_tier = (tier or "Free").strip().lower()
-        is_high_tier = (
-            norm_tier in ("plus", "pro", "ultra")
-            or "ultra" in norm_tier
-            or "pro" in norm_tier
-        )
-        is_ultra_tier = "ultra" in norm_tier
+        norm_tier = normalize_benefit_tier(tier).lower()
+        is_pro_or_ultra = norm_tier in ("pro", "ultra", "ultra_20x")
+        is_ultra_tier = norm_tier in ("ultra", "ultra_20x")
         for mode in raw_modes:
-            if mode == 3 and is_high_tier:
+            if mode == 3 and is_pro_or_ultra:
                 return True
             if mode == 4 and is_ultra_tier:
                 return True
@@ -476,7 +500,7 @@ class ModelDiscoveryService:
         import httpx
 
         headers = build_makersuite_headers(
-            cookies,
+            filter_minimal_cookies(cookies) or cookies,
             auth_user=auth_user or "0",
             tier=tier,
             include_visit_id=True,
@@ -484,7 +508,9 @@ class ModelDiscoveryService:
         from aistudio_api.config import settings
 
         url = "https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/ListModels"
-        async with httpx.AsyncClient(timeout=10.0, proxy=settings.proxy_url) as client:
+        async with httpx.AsyncClient(
+            timeout=10.0, proxy=settings.proxy_url, http2=True
+        ) as client:
             resp = await client.post(url, headers=headers, content="[]")
             if resp.status_code == 200:
                 return self._parse_raw_models(resp.json())
@@ -501,7 +527,7 @@ class ModelDiscoveryService:
         import httpx
 
         headers = build_makersuite_headers(
-            cookies,
+            filter_minimal_cookies(cookies) or cookies,
             auth_user=auth_user or "0",
             tier=tier,
             include_visit_id=True,
@@ -509,7 +535,9 @@ class ModelDiscoveryService:
         from aistudio_api.config import settings
 
         url = "https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/ListQuotaModels"
-        async with httpx.AsyncClient(timeout=10.0, proxy=settings.proxy_url) as client:
+        async with httpx.AsyncClient(
+            timeout=10.0, proxy=settings.proxy_url, http2=True
+        ) as client:
             resp = await client.post(url, headers=headers, content="[]")
             if resp.status_code == 200:
                 return self._parse_quota_models(resp.json())

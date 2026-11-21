@@ -33,6 +33,7 @@ class TierQuotaLimits:
     daily_limit: int = 20
     daily_token_limit: int | None = None
 
+
 @dataclass(frozen=True)
 class ModelDefaults:
     is_image_model: bool = False
@@ -142,9 +143,12 @@ _normalize_model_name = normalize_model_name
 def _coerce_thinking_level(value: object) -> ThinkingLevel:
     if isinstance(value, ThinkingLevel):
         return value
-    if isinstance(value, int):
+    if isinstance(value, int) and not isinstance(value, bool):
         return ThinkingLevel(value)
-    return ThinkingLevel[str(value).strip().upper()]
+    label = str(value).strip().upper()
+    if label in ThinkingLevel.__members__:
+        return ThinkingLevel[label]
+    raise ValueError(f"Unsupported thinking_level: {value!r}")
 
 
 def _coerce_media_resolution(value: object) -> int:
@@ -304,31 +308,6 @@ def _profile_from_mapping(raw: dict[str, object]) -> ModelProfile:
 
 def _default_config() -> dict[str, object]:
     return {
-        "waa": {
-            "active_server": "local_spidermonkey",
-            "servers": [
-                {
-                    "id": "local_spidermonkey",
-                    "name": "本地原生引擎 (SpiderMonkey 152)",
-                    "description": "本地独立纯静态 Go 服务，毫秒级快速生成官方原生高精度快照 Proof",
-                    "url": "http://127.0.0.1:8081",
-                    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:152.0) Gecko/20100101 Firefox/152.0",
-                    "headers": {
-                        "X-User-Agent": "grpc-web-javascript/0.1",
-                    },
-                },
-                {
-                    "id": "remote_spinsnow",
-                    "name": "远程公共服务 (spinsnow / NodeVM)",
-                    "description": "远程 Node.js VM 沙箱证明签名服务，绑定 Chromium 模拟特征环境",
-                    "url": "https://waa.spinsnow.fun",
-                    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
-                    "headers": {
-                        "X-User-Agent": "grpc-web-javascript/0.1",
-                    },
-                },
-            ],
-        },
         "logging": {
             "level": "INFO",
             "dump_requests": False,
@@ -399,7 +378,7 @@ def _default_config() -> dict[str, object]:
                 "required_tiers": ["Ultra", "Ultra_20X"],
             },
             "pro_required": {
-                "contains": ["argon", "image", "imagen", "gemini-3.1-pro"],
+                "contains": ["argon", "neon", "image", "imagen", "gemini-3.1-pro"],
                 "required_tiers": ["Pro", "Ultra", "Ultra_20X"],
             },
         },
@@ -439,7 +418,7 @@ def _default_config() -> dict[str, object]:
                     "daily_token_limit": 25_000_000,
                 },
                 "argon_models": {
-                    "match": {"contains": ["argon"]},
+                    "match": {"contains": ["argon", "neon"]},
                     "daily_limit": 50,
                     "daily_token_limit": 15_000_000,
                 },
@@ -465,7 +444,7 @@ def _default_config() -> dict[str, object]:
                     "daily_limit": 200,
                 },
                 "argon_models": {
-                    "match": {"contains": ["argon"]},
+                    "match": {"contains": ["argon", "neon"]},
                     "daily_limit": 200,
                 },
                 "carbon_models": {
@@ -487,7 +466,7 @@ def _default_config() -> dict[str, object]:
                     "daily_limit": 200,
                 },
                 "argon_models": {
-                    "match": {"contains": ["argon"]},
+                    "match": {"contains": ["argon", "neon"]},
                     "daily_limit": 200,
                 },
                 "carbon_models": {
@@ -578,16 +557,30 @@ def _load_yaml_config(config_path: Path) -> dict[str, object]:
     loaded = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
     if not isinstance(loaded, dict):
         loaded = {}
-    merged: dict[str, object] = _default_config()
+    def_config = _default_config()
+    merged: dict[str, object] = dict(def_config)
     merged.update(loaded)
-    raw_merged_defaults = merged.get("model_defaults")
-    raw_loaded_defaults = loaded.get("model_defaults")
-    if isinstance(raw_merged_defaults, dict) and isinstance(raw_loaded_defaults, dict):
-        def_config = _default_config()
-        def_md = def_config.get("model_defaults")
-        merged_model_defaults = dict(def_md if isinstance(def_md, dict) else {})
-        merged_model_defaults.update(raw_loaded_defaults)
-        merged["model_defaults"] = merged_model_defaults
+    for section_key in ("model_defaults", "logging"):
+        def_sec = def_config.get(section_key)
+        load_sec = loaded.get(section_key)
+        if isinstance(def_sec, dict) and isinstance(load_sec, dict):
+            sec_merged = dict(def_sec)
+            sec_merged.update(load_sec)
+            merged[section_key] = sec_merged
+    def_rot = def_config.get("rotator")
+    load_rot = loaded.get("rotator")
+    if isinstance(def_rot, dict) and isinstance(load_rot, dict):
+        rot_merged = dict(def_rot)
+        rot_merged.update(load_rot)
+        for sub_key in ("tier_weights", "cooldowns"):
+            def_sub = def_rot.get(sub_key)
+            load_sub = load_rot.get(sub_key)
+            if isinstance(def_sub, dict):
+                sub_merged = dict(def_sub)
+                if isinstance(load_sub, dict):
+                    sub_merged.update(load_sub)
+                rot_merged[sub_key] = sub_merged
+        merged["rotator"] = rot_merged
     _CONFIG_CACHE[path_key] = (mtime, merged)
     return merged
 
@@ -765,9 +758,11 @@ def update_configured_logging_settings(
         logging_dict["dump_dir"] = dump_dir
 
     parsed["logging"] = logging_dict
-    resolved_path.write_text(
+    from aistudio_api.infrastructure.utils.common import atomic_write_text
+
+    atomic_write_text(
+        resolved_path,
         yaml.dump(parsed, allow_unicode=True, sort_keys=False),
-        encoding="utf-8",
     )
     invalidate_config_cache()
     return logging_dict
@@ -848,9 +843,10 @@ def resolve_tier_quota_limits(
         )
         if normalized_model:
             for rule_key, rule_data in tier_rules.items():
-                if rule_key in ("default_limit", "default_token_limit") or not isinstance(
-                    rule_data, dict
-                ):
+                if rule_key in (
+                    "default_limit",
+                    "default_token_limit",
+                ) or not isinstance(rule_data, dict):
                     continue
                 raw_match = rule_data.get("match")
                 if isinstance(raw_match, dict):
@@ -991,9 +987,7 @@ def validate_config_sections(parsed: dict[str, object]) -> None:
                 and tier_val["default_limit"] is not None
                 and not _is_pos_int(tier_val["default_limit"])
             ):
-                raise ValueError(
-                    f"tier_quotas.{tier_key}.default_limit 必须是正整数"
-                )
+                raise ValueError(f"tier_quotas.{tier_key}.default_limit 必须是正整数")
             if (
                 "default_token_limit" in tier_val
                 and tier_val["default_token_limit"] is not None
@@ -1069,6 +1063,7 @@ def validate_config_sections(parsed: dict[str, object]) -> None:
             ):
                 raise ValueError("rotator.cooldowns 必须是非负数字映射字典")
 
+
 def get_configured_presets(
     config_path: str | os.PathLike[str] | None = None,
 ) -> list[dict[str, object]]:
@@ -1112,160 +1107,3 @@ def get_configured_paid_model_rules(
     if isinstance(def_rules, dict):
         return def_rules
     return {}
-
-
-# ─── WAA 签名服务多节点管理与特征绑定 (纯手动切换，不轮询) ───
-
-
-def get_configured_waa_settings(
-    config_path: str | os.PathLike[str] | None = None,
-) -> dict[str, object]:
-    """获取 config.yaml 中配置的 WAA 签名服务与特征设置。"""
-    resolved_path = _resolve_config_path(config_path)
-    config = _load_yaml_config(resolved_path)
-    raw_waa = config.get("waa")
-    if isinstance(raw_waa, dict):
-        return raw_waa
-    def_waa = _default_config().get("waa")
-    if isinstance(def_waa, dict):
-        return def_waa
-    return {}
-
-
-def get_active_waa_server(
-    config_path: str | os.PathLike[str] | None = None,
-) -> dict[str, object]:
-    """获取当前激活的 WAA 签名服务器配置及其绑定的特征信息。"""
-    waa = get_configured_waa_settings(config_path)
-    active_id = str(waa.get("active_server") or "local_spidermonkey").strip()
-    raw_servers = waa.get("servers")
-    servers = raw_servers if isinstance(raw_servers, list) else []
-
-    for item in servers:
-        if isinstance(item, dict) and str(item.get("id") or "").strip() == active_id:
-            return dict(item)
-
-    if servers and isinstance(servers[0], dict):
-        return dict(servers[0])
-
-    return {
-        "id": "local_spidermonkey",
-        "name": "本地原生引擎 (SpiderMonkey 152)",
-        "url": "http://127.0.0.1:8081",
-        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:152.0) Gecko/20100101 Firefox/152.0",
-        "headers": {"X-User-Agent": "grpc-web-javascript/0.1"},
-    }
-
-
-def switch_active_waa_server(
-    server_id: str,
-    config_path: str | os.PathLike[str] | None = None,
-) -> dict[str, object]:
-    """纯手动切换当前激活的 WAA 签名服务器，并持久化保存到 config.yaml。"""
-    resolved_path = _resolve_config_path(config_path)
-    content = (
-        resolved_path.read_text(encoding="utf-8") if resolved_path.exists() else ""
-    )
-    parsed = yaml.safe_load(content) or {}
-    if not isinstance(parsed, dict):
-        parsed = {}
-
-    raw_waa = parsed.get("waa")
-    waa_dict = dict(raw_waa) if isinstance(raw_waa, dict) else {}
-    target_id = server_id.strip()
-    waa_dict["active_server"] = target_id
-    parsed["waa"] = waa_dict
-
-    resolved_path.write_text(
-        yaml.dump(parsed, allow_unicode=True, sort_keys=False),
-        encoding="utf-8",
-    )
-    invalidate_config_cache()
-    return get_active_waa_server(config_path)
-
-
-def upsert_waa_server(
-    server_data: dict[str, object],
-    config_path: str | os.PathLike[str] | None = None,
-) -> dict[str, object]:
-    """新增或更新指定 WAA 签名服务器配置。"""
-    import uuid
-
-    resolved_path = _resolve_config_path(config_path)
-    content = (
-        resolved_path.read_text(encoding="utf-8") if resolved_path.exists() else ""
-    )
-    parsed = yaml.safe_load(content) or {}
-    if not isinstance(parsed, dict):
-        parsed = {}
-
-    raw_waa = parsed.get("waa")
-    waa_dict = dict(raw_waa) if isinstance(raw_waa, dict) else {}
-    raw_servers = waa_dict.get("servers")
-    servers = list(raw_servers) if isinstance(raw_servers, list) else []
-
-    target_id = str(server_data.get("id") or "").strip()
-    if not target_id:
-        target_id = f"server_{uuid.uuid4().hex[:8]}"
-        server_data["id"] = target_id
-
-    updated = False
-    for idx, s in enumerate(servers):
-        if isinstance(s, dict) and str(s.get("id") or "").strip() == target_id:
-            servers[idx] = server_data
-            updated = True
-            break
-    if not updated:
-        servers.append(server_data)
-
-    waa_dict["servers"] = servers
-    parsed["waa"] = waa_dict
-    resolved_path.write_text(
-        yaml.dump(parsed, allow_unicode=True, sort_keys=False),
-        encoding="utf-8",
-    )
-    invalidate_config_cache()
-    return server_data
-
-
-def delete_waa_server(
-    server_id: str,
-    config_path: str | os.PathLike[str] | None = None,
-) -> bool:
-    """删除指定 ID 的 WAA 签名服务器。"""
-    resolved_path = _resolve_config_path(config_path)
-    content = (
-        resolved_path.read_text(encoding="utf-8") if resolved_path.exists() else ""
-    )
-    parsed = yaml.safe_load(content) or {}
-    if not isinstance(parsed, dict):
-        return False
-
-    raw_waa = parsed.get("waa")
-    if not isinstance(raw_waa, dict):
-        return False
-
-    raw_servers = raw_waa.get("servers")
-    if not isinstance(raw_servers, list):
-        return False
-
-    target_id = server_id.strip()
-    new_servers = [
-        s
-        for s in raw_servers
-        if isinstance(s, dict) and str(s.get("id") or "").strip() != target_id
-    ]
-    if len(new_servers) == len(raw_servers):
-        return False
-
-    raw_waa["servers"] = new_servers
-    if str(raw_waa.get("active_server") or "").strip() == target_id and new_servers:
-        raw_waa["active_server"] = str(new_servers[0].get("id") or "")
-
-    parsed["waa"] = raw_waa
-    resolved_path.write_text(
-        yaml.dump(parsed, allow_unicode=True, sort_keys=False),
-        encoding="utf-8",
-    )
-    invalidate_config_cache()
-    return True
