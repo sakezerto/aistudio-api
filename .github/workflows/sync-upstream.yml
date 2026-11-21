@@ -1,6 +1,6 @@
 name: Sync Upstream
 
-# 定时把上游 DeconstructedCube/aistudio-api@master 快进合并进本 fork 的 master。
+# 定时把上游 DeconstructedCube/aistudio-api@master 合并进本 fork 的 master。
 # 合并成功后的 push 会自动触发 docker-publish.yml 构建镜像；
 # 上游无更新时不产生 push，也就不构建，零浪费。
 # 只读 fetch 上游，绝不向其提交 PR / issue；失败只写 workflow summary 告警。
@@ -27,7 +27,7 @@ env:
 
 jobs:
   sync:
-    name: Fast-forward fork from upstream
+    name: Merge upstream into fork
     runs-on: ubuntu-latest
     steps:
       - name: Checkout fork
@@ -35,7 +35,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Fast-forward merge upstream
+      - name: Merge upstream
         id: sync
         shell: bash
         run: |
@@ -52,19 +52,24 @@ jobs:
 
           if git merge-base --is-ancestor "$UP" HEAD; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "mode=up-to-date" >> "$GITHUB_OUTPUT"
             echo "::notice::fork 已包含上游全部提交，无需同步"
-          elif git merge-base --is-ancestor HEAD "$UP"; then
-            git merge --ff-only "$UP"
-            git push origin "HEAD:master"
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::已快进合并上游 $UP 并推送"
           else
-            # fork 与上游已分叉（fork 有独有提交且上游也前进了）：
-            # 不自动 merge、不强推，只告警，由人工处理，避免丢提交或污染上游。
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "diverged=true" >> "$GITHUB_OUTPUT"
-            echo "::error::fork 与上游已分叉，无法快进合并，请人工 rebase/merge 后推送"
-            exit 1
+            # fork 与上游分叉（或单纯落后）时都用 merge 合入：
+            # 能快进则快进，分叉则产生 merge commit，行为与网页点 Update branch 一致。
+            if git merge --no-edit "upstream/${UPSTREAM_BRANCH}"; then
+              git push origin "HEAD:master"
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+              echo "mode=merge" >> "$GITHUB_OUTPUT"
+              echo "::notice::已合并上游 $UP 并推送"
+            else
+              # 合并冲突：中止合并、保持工作树干净，失败退出并只写 summary 告警。
+              git merge --abort || true
+              echo "changed=false" >> "$GITHUB_OUTPUT"
+              echo "mode=conflict" >> "$GITHUB_OUTPUT"
+              echo "::error::合并上游 $UP 时发生冲突，已中止，请人工解决后推送"
+              exit 1
+            fi
           fi
 
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
@@ -81,9 +86,10 @@ jobs:
             echo "| 上游仓库 | \`${UPSTREAM_REPO}@${UPSTREAM_BRANCH}\` |"
             echo "| 上游提交 | \`${{ steps.sync.outputs.upstream_sha }}\` |"
             echo "| fork 提交 | \`${{ steps.sync.outputs.sha }}\` |"
+            echo "| 同步方式 | \`${{ steps.sync.outputs.mode }}\` |"
             echo "| 是否有更新 | \`${{ steps.sync.outputs.changed }}\` |"
-            if [ "${{ steps.sync.outputs.diverged }}" = "true" ]; then
-              echo "| 分叉告警 | \`true：需人工处理\` |"
+            if [ "${{ steps.sync.outputs.mode }}" = "conflict" ]; then
+              echo "| 冲突告警 | \`true：合并冲突，需人工处理\` |"
             fi
             echo ""
             echo "> 定时：每天 UTC 00:00 / 12:00（北京时间 08:00 / 20:00）。"
